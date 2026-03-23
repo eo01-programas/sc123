@@ -1,0 +1,123 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STOCK COSTURA</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-row">
+            <div class="brand">STOCK COSTURA</div>
+            <span class="header-plant-label">Planta:</span>
+            <div id="plant-pills" class="plant-pills"></div>
+            <div class="header-search">
+                <div class="search-oc-pill">
+                    <span class="search-oc-label">OC:</span>
+                    <input
+                        type="text"
+                        class="search-oc-input"
+                        id="search-oc-input"
+                        placeholder="Buscar..."
+                        autocomplete="off"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();buscarOCCostura(this.value);}">
+                </div>
+                <div id="search-oc-msg" class="search-oc-msg" style="display:none;"></div>
+            </div>
+            <div class="header-totals">
+                <span class="meta-pill metric-pill total-pill" id="metric-total-proceso">TOTAL: 0 PDS proceso</span>
+                <span class="meta-pill metric-pill total-pill" id="metric-total-xhabilitar">0 PDS x habilitar</span>
+            </div>
+            <button type="button" class="icon-btn" onclick="reloadData()" title="Refrescar" aria-label="Refrescar">&#8635;</button>
+            <div id="loader" class="loader" style="display: none;">
+                <div class="spinner"></div>
+                <span>Cargando datos...</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="table-wrapper">
+            <table id="tabla-costura">
+                <thead>
+                    <tr>
+                        <th style="width: 4.98%;">HOD</th>
+                        <th style="width: 4.98%;">F.ING</th>
+                        <th style="width: 3.52%;">LINEA</th>
+                        <th style="width: 3.22%;">CLIENTE</th>
+                        <th style="width: 3.05%; text-align:center;">n</th>
+                        <th style="width: 5.86%;">OC</th>
+                        <th style="width: 7.03%;">COLOR</th>
+                        <th style="width: 2.93%; text-align:center;">PDS</th>
+                        <th style="width: 5.50%;">PRENDA</th>
+                        <th style="width: 5.86%;">CERTIFICADO</th>
+                        <th style="width: 5.27%;">HAB</th>
+                        <th style="width: 10.03%;">COMP/OTROS</th>
+                        <th style="width: 7.03%; text-align:center;">HILO</th>
+                        <th style="width: 6.15%; text-align:center;">Avios</th>
+                        <th style="width: 5.86%; text-align:center;">S. INICIO</th>
+                        <th id="th-salida-linea" style="width: 6.44%; text-align:center;">SALIDA<br>---</th>
+                        <th style="width: 5.27%; text-align:center;">S. FINAL</th>
+                        <th style="width: 7.62%; text-align:center;">STATUS</th>
+                        <th style="width: 4.39%; text-align:center;">Liq</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-costura">
+                    <tr>
+                        <td colspan="19" class="no-data">Cargando registros...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="linea-modal-overlay" class="linea-modal-overlay" aria-hidden="true">
+        <div class="linea-modal" role="dialog" aria-modal="true" aria-labelledby="linea-modal-title">
+            <div id="linea-modal-title" class="linea-modal-header">Editar Planta y Linea</div>
+            <div class="linea-modal-body">
+                <div class="linea-modal-field">
+                    <label for="linea-modal-planta">Planta</label>
+                    <select id="linea-modal-planta"></select>
+                </div>
+                <div class="linea-modal-field">
+                    <label for="linea-modal-linea">Linea</label>
+                    <input id="linea-modal-linea" type="text" maxlength="40" autocomplete="off" />
+                </div>
+            </div>
+            <div class="linea-modal-actions">
+                <button type="button" id="linea-modal-cancel" class="linea-modal-btn">Cancelar</button>
+                <button type="button" id="linea-modal-save" class="linea-modal-btn primary">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="liquidacion-modal-overlay" class="linea-modal-overlay" aria-hidden="true">
+        <div class="linea-modal" role="dialog" aria-modal="true" aria-labelledby="liquidacion-modal-title">
+            <div id="liquidacion-modal-title" class="linea-modal-header">Confirmar liquidacion</div>
+            <div class="linea-modal-body">
+                <p class="liquidacion-modal-copy">
+                    <strong>EL CORTE ESTA LIQUIDADO AL 100%?</strong>
+                    <span class="liquidacion-modal-note">(ya se mermaron piezas faltantes , etc)</span>
+                </p>
+            </div>
+            <div class="linea-modal-actions">
+                <button type="button" id="liquidacion-modal-no" class="linea-modal-btn">NO</button>
+                <button type="button" id="liquidacion-modal-yes" class="linea-modal-btn primary">SI</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/cofaco.js"></script>
+    <script src="js/citi1.js"></script>
+    <script src="js/citi2.js"></script>
+    <script src="js/citi3.js"></script>
+    <script src="js/citi4.js"></script>
+    <script src="js/otros.js"></script>
+    <script src="js/pcp.js"></script>
+    <script src="js/login.js"></script>
+    <script src="js/stock_costura.js"></script>
+</body>
+</html>
+
