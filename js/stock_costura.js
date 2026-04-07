@@ -1,4 +1,4 @@
-﻿const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzWV9x39Qw5EcQJtBP9Om8LZdYnFCZ_ikXFuHix9qMo2kWQKMXv2mJ_rLahzNOxRBmhhQ/exec';
+﻿const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwYHfZt9iuJhX_uZgudGEZC2Iqf708eScH8zhaFQJswBFS3f5DblaYTuZaW03Rn9yStmA/exec';
         const SHEET_ID = '18cQuwqerdMggAeJ8TCUKA7-gujXsA91-CRMUTNpr8aQ';
         const MONTH_ABBR_ES = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
         const ESTADO_COSTURA_OPTIONS = ['', 'Proceso', 'Liquidado', 'Anaquel', 'En Habilitado'];
