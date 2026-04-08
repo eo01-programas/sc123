@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
 </head>
+
 <body>
     <header>
         <div class="header-row">
@@ -16,11 +18,7 @@
             <div class="header-search">
                 <div class="search-oc-pill">
                     <span class="search-oc-label">OC:</span>
-                    <input
-                        type="text"
-                        class="search-oc-input"
-                        id="search-oc-input"
-                        placeholder="Buscar..."
+                    <input type="text" class="search-oc-input" id="search-oc-input" placeholder="Buscar..."
                         autocomplete="off"
                         onkeydown="if(event.key==='Enter'){event.preventDefault();buscarOCCostura(this.value);}">
                 </div>
@@ -30,7 +28,8 @@
                 <span class="meta-pill metric-pill total-pill" id="metric-total-proceso">TOTAL: 0 PDS proceso</span>
                 <span class="meta-pill metric-pill total-pill" id="metric-total-xhabilitar">0 PDS x habilitar</span>
             </div>
-            <button type="button" class="icon-btn" onclick="reloadData()" title="Refrescar" aria-label="Refrescar">&#8635;</button>
+            <button type="button" class="icon-btn" onclick="reloadData()" title="Refrescar"
+                aria-label="Refrescar">&#8635;</button>
             <div id="loader" class="loader" style="display: none;">
                 <div class="spinner"></div>
                 <span>Cargando datos...</span>
@@ -110,6 +109,7 @@
     </div>
 
     <script src="js/cofaco.js"></script>
+    <script src="js/cofaco_2.js"></script>
     <script src="js/citi1.js"></script>
     <script src="js/citi2.js"></script>
     <script src="js/citi3.js"></script>
@@ -119,4 +119,5 @@
     <script src="js/login.js"></script>
     <script src="js/stock_costura.js"></script>
 </body>
+
 </html>
