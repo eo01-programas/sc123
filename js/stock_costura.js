@@ -29,6 +29,7 @@ let activeShifts = [];
 let activeOcSearchQuery = '';
 let ocSearchState = null;
 let ocSearchDataStamp = 0;
+let selectedColorFilter = '';
 let lineaModalState = null;
 const lineaModalRefs = {
     overlay: null,
@@ -46,6 +47,13 @@ const liquidacionModalRefs = {
 const REORDER_MODAL_DELAY_MS = 280;
 let reorderModalState = {
     overlay: null
+};
+let colorFilterPopoverState = {
+    popover: null,
+    select: null,
+    btnClear: null,
+    currentOptions: [],
+    anchorRect: null
 };
 const READ_ONLY_ACCESS_PROFILE = Object.freeze({
     key: 'READ_ONLY',
@@ -126,6 +134,27 @@ function canEditCurrentFilter() {
     return canEditFilter(selectedPlantaFilter);
 }
 
+function normalizeColorFilterValue(value) {
+    return String(value === null || value === undefined ? '' : value).trim().toUpperCase();
+}
+
+function resolveInitialPlantaFilterForProfile(profile) {
+    const rawKey = String(profile && profile.key ? profile.key : '').trim().toUpperCase();
+    const editableFilters = profile && Array.isArray(profile.editableFilters) ? profile.editableFilters : [];
+    const supportedFilters = new Set(['COFACO', 'COFACO 2', 'CITI1', 'CITI2', 'CITI3', 'CITI4', PLANTA_FILTER_OTHERS]);
+
+    if (supportedFilters.has(rawKey)) {
+        return rawKey;
+    }
+
+    const firstEditable = editableFilters
+        .map(value => normalizeFilterForAccess(value))
+        .find(value => supportedFilters.has(value));
+    if (firstEditable) return firstEditable;
+
+    return selectedPlantaFilter || 'COFACO';
+}
+
 function canEditRowMeta(meta) {
     if (!meta || !Number.isFinite(Number(meta.rowIndex))) return false;
     const row = allData.find(item => Number(item.rowIndex) === Number(meta.rowIndex));
@@ -138,10 +167,12 @@ async function ensureAccessFromLogin() {
     if (loginApi && typeof loginApi.requireAccess === 'function') {
         const profile = await loginApi.requireAccess();
         setActiveAccessProfile(profile);
+        selectedPlantaFilter = resolveInitialPlantaFilterForProfile(profile);
         return;
     }
     const fallback = window.STOCK_COSTURA_ACTIVE_PROFILE || window.STOCK_COSTURA_ROLE_PRESET || READ_ONLY_ACCESS_PROFILE;
     setActiveAccessProfile(fallback);
+    selectedPlantaFilter = resolveInitialPlantaFilterForProfile(fallback);
 }
 
 function showLoader(show) {
@@ -409,11 +440,230 @@ function getFilteredDataByFilter(filterValue, options = {}) {
 }
 
 function getFilteredData() {
-    return getFilteredDataByFilter(selectedPlantaFilter);
+    return getFilteredDataByFilter(selectedPlantaFilter).filter(matchesSelectedColorFilter);
 }
 
 function isLineaEditableForCurrentFilter() {
     return canEditCurrentFilter();
+}
+
+function matchesSelectedColorFilter(row) {
+    const filter = normalizeColorFilterValue(selectedColorFilter);
+    if (!filter) return true;
+
+    const rowColor = String((row && row.color) || '').trim();
+    if (filter === '__EMPTY__') {
+        return rowColor === '';
+    }
+
+    return normalizeColorFilterValue(rowColor) === filter;
+}
+
+function getBaseRowsForColorFilter() {
+    return getFilteredDataByFilter(selectedPlantaFilter, { includeSearch: true });
+}
+
+function getUniqueColorOptionsForCurrentView() {
+    const rows = getBaseRowsForColorFilter();
+    const map = new Map();
+    let hasEmpty = false;
+
+    rows.forEach(row => {
+        const raw = String((row && row.color) || '').trim();
+        if (!raw) {
+            hasEmpty = true;
+            return;
+        }
+        const key = normalizeColorFilterValue(raw);
+        if (!map.has(key)) {
+            map.set(key, raw);
+        }
+    });
+
+    const options = Array.from(map.entries())
+        .sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true, sensitivity: 'base' }))
+        .map(([value, label]) => ({ value, label }));
+
+    if (hasEmpty) {
+        options.unshift({ value: '__EMPTY__', label: '(VACIO)' });
+    }
+
+    if (selectedColorFilter) {
+        const currentNorm = normalizeColorFilterValue(selectedColorFilter);
+        const alreadyExists = options.some(option => option.value === currentNorm || (option.value === '__EMPTY__' && currentNorm === '__EMPTY__'));
+        if (!alreadyExists) {
+            options.unshift({
+                value: currentNorm,
+                label: currentNorm === '__EMPTY__' ? '(VACIO)' : String(selectedColorFilter).trim()
+            });
+        }
+    }
+
+    return options;
+}
+
+function ensureColorFilterModalInitialized() {
+    if (colorFilterPopoverState.popover) return;
+
+    colorFilterPopoverState.popover = document.getElementById('color-filter-popover');
+    colorFilterPopoverState.select = document.getElementById('color-filter-select');
+    colorFilterPopoverState.btnClear = document.getElementById('color-filter-clear');
+    if (!colorFilterPopoverState.popover || !colorFilterPopoverState.select || !colorFilterPopoverState.btnClear) {
+        return;
+    }
+
+    colorFilterPopoverState.btnClear.addEventListener('click', () => {
+        applyColorFilterValue('');
+        closeColorFilterPopover();
+    });
+    colorFilterPopoverState.select.addEventListener('change', () => {
+        applyColorFilterValue(colorFilterPopoverState.select.value);
+        closeColorFilterPopover();
+    });
+    colorFilterPopoverState.select.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            applyColorFilterValue(colorFilterPopoverState.select.value);
+            closeColorFilterPopover();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            closeColorFilterPopover();
+        }
+    });
+}
+
+function updateColorFilterHeaderState() {
+    const th = document.getElementById('th-color-filter');
+    if (!th) return;
+
+    const active = !!normalizeColorFilterValue(selectedColorFilter);
+    th.classList.toggle('is-filter-active', active);
+    if (active) {
+        const label = selectedColorFilter === '__EMPTY__' ? '(VACIO)' : String(selectedColorFilter).trim();
+        th.title = `Filtro activo: ${label}. Click derecho para cambiar.`;
+    } else {
+        th.title = 'Click derecho para filtrar por COLOR';
+    }
+}
+
+function positionColorFilterPopover(anchorRect) {
+    if (!colorFilterPopoverState.popover) return;
+
+    const popover = colorFilterPopoverState.popover;
+    const margin = 8;
+    const width = Math.min(315, Math.max(260, popover.offsetWidth || 315));
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+
+    let left = anchorRect.right + margin;
+    let top = anchorRect.bottom + 6;
+
+    if (left + width > viewportWidth - margin) {
+        left = Math.max(margin, anchorRect.left - width - margin);
+    }
+
+    const popoverHeight = popover.offsetHeight || 220;
+    if (top + popoverHeight > viewportHeight - margin) {
+        top = Math.max(margin, viewportHeight - popoverHeight - margin);
+    }
+
+    popover.style.left = `${Math.round(left)}px`;
+    popover.style.top = `${Math.round(top)}px`;
+    popover.style.minWidth = `${width}px`;
+}
+
+function openColorFilterPopover(anchorRect) {
+    ensureColorFilterModalInitialized();
+    if (!colorFilterPopoverState.popover || !colorFilterPopoverState.select) return;
+
+    const options = getUniqueColorOptionsForCurrentView();
+    colorFilterPopoverState.currentOptions = options;
+    colorFilterPopoverState.select.innerHTML = [
+        '<option value="">-- Seleccione un valor --</option>',
+        ...options.map(option => {
+            const valueAttr = escapeHtmlAttr(option.value);
+            return `<option value="${valueAttr}">${escapeHtml(option.label)}</option>`;
+        })
+    ].join('');
+
+    colorFilterPopoverState.select.value = normalizeColorFilterValue(selectedColorFilter);
+    if (selectedColorFilter === '') {
+        colorFilterPopoverState.select.value = '';
+    } else if (selectedColorFilter === '__EMPTY__') {
+        colorFilterPopoverState.select.value = '__EMPTY__';
+    }
+
+    colorFilterPopoverState.anchorRect = anchorRect || document.getElementById('th-color-filter')?.getBoundingClientRect?.();
+    if (colorFilterPopoverState.anchorRect) {
+        colorFilterPopoverState.popover.style.visibility = 'hidden';
+        colorFilterPopoverState.popover.classList.add('active');
+        colorFilterPopoverState.popover.setAttribute('aria-hidden', 'false');
+        requestAnimationFrame(() => {
+            positionColorFilterPopover(colorFilterPopoverState.anchorRect);
+            colorFilterPopoverState.popover.style.visibility = 'visible';
+        });
+    } else {
+        colorFilterPopoverState.popover.classList.add('active');
+        colorFilterPopoverState.popover.setAttribute('aria-hidden', 'false');
+    }
+
+    attachColorFilterOutsideHandlers();
+    setTimeout(() => {
+        try { colorFilterPopoverState.select.focus(); } catch (e) { }
+    }, 0);
+}
+
+function closeColorFilterPopover() {
+    if (!colorFilterPopoverState.popover) return;
+    colorFilterPopoverState.popover.classList.remove('active');
+    colorFilterPopoverState.popover.setAttribute('aria-hidden', 'true');
+    colorFilterPopoverState.popover.style.visibility = '';
+    detachColorFilterOutsideHandlers();
+}
+
+function applyColorFilterValue(value) {
+    selectedColorFilter = String(value || '').trim();
+    ocSearchState = null;
+    updateColorFilterHeaderState();
+    updateStats();
+    renderTable();
+}
+
+function openColorFilterFromHeader(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const targetRect = event && event.currentTarget && typeof event.currentTarget.getBoundingClientRect === 'function'
+        ? event.currentTarget.getBoundingClientRect()
+        : null;
+    openColorFilterPopover(targetRect);
+}
+
+function onColorFilterDocumentPointerDown(event) {
+    if (!colorFilterPopoverState.popover || !colorFilterPopoverState.popover.classList.contains('active')) return;
+    const popover = colorFilterPopoverState.popover;
+    const header = document.getElementById('th-color-filter');
+    if (popover.contains(event.target) || (header && header.contains(event.target))) return;
+    closeColorFilterPopover();
+}
+
+function onColorFilterViewportChanged() {
+    closeColorFilterPopover();
+}
+
+function attachColorFilterOutsideHandlers() {
+    document.addEventListener('mousedown', onColorFilterDocumentPointerDown, true);
+    document.addEventListener('touchstart', onColorFilterDocumentPointerDown, true);
+    window.addEventListener('resize', onColorFilterViewportChanged, true);
+    window.addEventListener('scroll', onColorFilterViewportChanged, { capture: true, passive: true });
+}
+
+function detachColorFilterOutsideHandlers() {
+    document.removeEventListener('mousedown', onColorFilterDocumentPointerDown, true);
+    document.removeEventListener('touchstart', onColorFilterDocumentPointerDown, true);
+    window.removeEventListener('resize', onColorFilterViewportChanged, true);
+    window.removeEventListener('scroll', onColorFilterViewportChanged, true);
 }
 
 function normalizePlantaModalValue(value) {
@@ -941,7 +1191,7 @@ function updateStats() {
     let totalXHabilitar = 0;
 
     PLANTA_TOTAL_FILTERS.forEach(filterValue => {
-        const rowsByFilter = getFilteredDataByFilter(filterValue, { includeSearch: false });
+        const rowsByFilter = getFilteredDataByFilter(filterValue, { includeSearch: false }).filter(matchesSelectedColorFilter);
         const m = calculateMetricsForRows(rowsByFilter);
         totalProceso += m.proceso;
         totalXHabilitar += m.xHabilitar;
@@ -973,6 +1223,7 @@ function renderTable() {
     const filtered = getFilteredData();
     const canEditInCurrentView = canEditCurrentFilter();
     const allowLineaEdit = canEditInCurrentView && isLineaEditableForCurrentFilter();
+    updateColorFilterHeaderState();
 
     const tbody = document.getElementById('tbody-costura');
 
@@ -981,60 +1232,62 @@ function renderTable() {
             tbody.innerHTML = '<tr><td colspan="19" class="no-data">No hay registros de costura registrados aÃƒÂºn</td></tr>';
         } else if (activeOcSearchQuery) {
             tbody.innerHTML = '<tr><td colspan="19" class="no-data">No se encontraron coincidencias para la OC buscada en la planta seleccionada</td></tr>';
+        } else if (normalizeColorFilterValue(selectedColorFilter)) {
+            const colorLabel = selectedColorFilter === '__EMPTY__' ? '(VACIO)' : String(selectedColorFilter).trim();
+            tbody.innerHTML = `<tr><td colspan="19" class="no-data">No hay registros para el color ${escapeHtml(colorLabel)}</td></tr>`;
         } else {
             tbody.innerHTML = '<tr><td colspan="19" class="no-data">No hay registros para la planta seleccionada</td></tr>';
         }
         return;
     }
 
-    const groups = groupRowsByLinea(filtered);
     const columnsCount = 19;
     const collapsedSet = getCollapsedLineSetForCurrentFilter();
-    const validGroupNames = new Set(groups.map(group => group.name));
-    Array.from(collapsedSet).forEach(name => {
-        if (!validGroupNames.has(name)) collapsedSet.delete(name);
-    });
+    const isCiti1SectorView = String(selectedPlantaFilter || '').toUpperCase() === 'CITI1';
+    let lineGroupNames = [];
 
-    tbody.innerHTML = groups.map(group => {
-        const isCollapsed = collapsedSet.has(group.name);
-        const band = `
-                    <tr class="linea-band${isCollapsed ? ' is-collapsed' : ''}" data-linea="${escapeHtmlAttr(group.name)}" title="1 click: contraer/expandir linea | doble click: contraer/expandir todas">
+    if (isCiti1SectorView) {
+        const sectorGroups = groupRowsByCiti1Sector(filtered);
+        const validGroupNames = new Set();
+        sectorGroups.forEach(sectorGroup => {
+            (sectorGroup.lineGroups || []).forEach(group => validGroupNames.add(group.name));
+        });
+        Array.from(collapsedSet).forEach(name => {
+            if (!validGroupNames.has(name)) collapsedSet.delete(name);
+        });
+
+        tbody.innerHTML = sectorGroups.map(sectorGroup => {
+            const sectorBand = `
+                    <tr class="sector-band" data-sector="${escapeHtmlAttr(sectorGroup.name)}">
                         <th colspan="${columnsCount}">
-                            <span class="band-toggle">${isCollapsed ? '+' : '-'}</span>
-                            ${escapeHtml(group.name)}
-                            <span class="band-meta">${formatNumber(group.stockFinalTotal)} pds</span>
+                            <span class="sector-badge">${escapeHtml(sectorGroup.name)}</span>
+                            <span class="band-meta">${formatNumber(sectorGroup.stockFinalTotal)} pds</span>
                         </th>
                     </tr>
                 `;
 
-        const rowsHtml = isCollapsed ? '' : group.rows.map((row, idx) => `
-                    <tr class="${idx % 2 === 0 ? 'group-a' : 'group-b'}">
-                        <td title="${escapeHtmlAttr(row.fDespachoTooltip)}"><strong>${row.fDespachoDisplay}</strong></td>
-                        <td title="${escapeHtmlAttr(row.fIngRealTooltip)}"><strong>${row.fIngRealDisplay}</strong></td>
-                        <td class="${allowLineaEdit ? 'linea-editable-cell' : ''}" ${allowLineaEdit ? `title="Doble click para editar" ${buildRowUpdateMetaAttrs(row)} data-col-name="LINEA" data-current-linea="${escapeHtmlAttr(String(row.linea || '').trim())}" data-current-planta="${escapeHtmlAttr(String(row.planta || '').trim())}"` : ''}>${escapeHtml(String(row.linea || ''))}</td>
-                        <td class="client-cell">${normalizeClientName(row.cliente)}</td>
-                        <td class="pds-cell${canEditInCurrentView ? ' editable-int-cell pcost-editable-cell' : ''}" ${canEditInCurrentView ? `title="1 click para editar" ${buildRowUpdateMetaAttrs(row)} data-col-name="Pcost" data-raw="${escapeHtmlAttr(formatEditableIntegerRaw(row.pcost))}" data-allow-empty="1"` : ''}>${formatEditableIntegerDisplay(row.pcost)}</td>
-                        <td class="oc-cell">${row.op}-${row.corte}</td>
-                        <td title="${escapeHtmlAttr(row.colorTooltip)}">${abbreviate(row.color)}</td>
-                        <td class="pds-cell">${formatNumber(row.pds)}</td>
-                        <td>${normalizePrenda(row.prenda)}</td>
-                        <td>${normalizeCert(row.tipoCert)}</td>
-                        <td>${formatStatusHabilitado(row.estadoHabilitado)}</td>
-                        <td>${formatCompOtros(row)}</td>
-                        <td class="hilo-cell">${formatHiloCostura(row.hiloCostura)}</td>
-                        <td class="avios-cell">${formatEstadoAvios(row.estadoAvios)}</td>
-                        <td class="pds-cell${canEditInCurrentView ? ' editable-int-cell' : ''}" ${canEditInCurrentView ? `title="Doble click para editar" ${buildRowUpdateMetaAttrs(row)} data-col-name="stock inicio" data-raw="${escapeHtmlAttr(formatEditableIntegerRaw(row.stockInicio))}"` : ''}>${formatEditableIntegerDisplay(row.stockInicio)}</td>
-                        <td class="pds-cell${canEditInCurrentView ? ' editable-int-cell' : ''}" ${canEditInCurrentView ? `title="Doble click para editar" ${buildRowUpdateMetaAttrs(row)} data-col-name="salida de linea" data-raw="${escapeHtmlAttr(formatEditableIntegerRaw(row.salidaDeLinea))}"` : ''}>${formatEditableIntegerDisplay(row.salidaDeLinea)}</td>
-                        <td class="pds-cell s-final-cell"><strong>${row.stockFinalDisplay}</strong></td>
-                        <td>${renderEstadoCosturaSelect(row, canEditInCurrentView)}</td>
-                        <td class="liquidacion-cell">${renderLiquidacionCheckbox(row, canEditInCurrentView)}</td>
-                    </tr>
-                `).join('');
+            const lineGroupsHtml = (sectorGroup.lineGroups || []).map(group => {
+                lineGroupNames.push(group.name);
+                return buildLineaGroupHtml(group, columnsCount, collapsedSet, canEditInCurrentView, allowLineaEdit);
+            }).join('');
 
-        return band + rowsHtml;
-    }).join('');
+            return sectorBand + lineGroupsHtml;
+        }).join('');
+    } else {
+        const groups = groupRowsByLinea(filtered);
+        const validGroupNames = new Set(groups.map(group => group.name));
+        Array.from(collapsedSet).forEach(name => {
+            if (!validGroupNames.has(name)) collapsedSet.delete(name);
+        });
 
-    bindLineaBandInteractions(groups.map(group => group.name));
+        tbody.innerHTML = groups.map(group => {
+            lineGroupNames.push(group.name);
+            return buildLineaGroupHtml(group, columnsCount, collapsedSet, canEditInCurrentView, allowLineaEdit);
+        }).join('');
+    }
+
+    bindLineaBandInteractions(lineGroupNames);
+    updateColorFilterHeaderState();
 }
 
 function getLineaGroupName(value) {
@@ -1107,6 +1360,46 @@ function groupRowsByLinea(rows) {
     return groups;
 }
 
+function getCiti1SectorName(lineaValue) {
+    const raw = String(lineaValue || '').trim();
+    if (!/^\d+$/.test(raw)) return 'SIN SECTOR';
+
+    const lineNum = parseInt(raw, 10);
+    if (lineNum >= 1 && lineNum <= 14) return 'SECTOR 1';
+    if (lineNum >= 15 && lineNum <= 30) return 'SECTOR 2';
+    return 'SIN SECTOR';
+}
+
+function compareCiti1SectorNames(a, b) {
+    const order = {
+        'SECTOR 1': 1,
+        'SECTOR 2': 2,
+        'SIN SECTOR': 3
+    };
+    return (order[a] || 99) - (order[b] || 99);
+}
+
+function groupRowsByCiti1Sector(rows) {
+    const map = new Map();
+
+    (rows || []).forEach(row => {
+        const sectorName = getCiti1SectorName(row.linea);
+        if (!map.has(sectorName)) {
+            map.set(sectorName, { name: sectorName, stockFinalTotal: 0, rows: [] });
+        }
+        const sectorGroup = map.get(sectorName);
+        sectorGroup.rows.push(row);
+        sectorGroup.stockFinalTotal += getLineaGroupStockFinalNumericValue(row);
+    });
+
+    const sectors = Array.from(map.values());
+    sectors.sort((a, b) => compareCiti1SectorNames(a.name, b.name));
+    sectors.forEach(sectorGroup => {
+        sectorGroup.lineGroups = groupRowsByLinea(sectorGroup.rows);
+    });
+    return sectors;
+}
+
 function updateRenderedLineaBandTotal(lineaValue) {
     const lineaName = getLineaGroupName(lineaValue);
     const tbody = document.getElementById('tbody-costura');
@@ -1125,6 +1418,68 @@ function updateRenderedLineaBandTotal(lineaValue) {
         .reduce((sum, row) => sum + getLineaGroupStockFinalNumericValue(row), 0);
 
     bandMeta.textContent = `${formatNumber(total)} pds`;
+}
+
+function updateRenderedSectorBandTotal(sectorValue) {
+    if (String(selectedPlantaFilter || '').toUpperCase() !== 'CITI1') return;
+    const sectorName = String(sectorValue || '');
+    if (!sectorName) return;
+
+    const tbody = document.getElementById('tbody-costura');
+    if (!tbody) return;
+
+    const bandRow = Array.from(tbody.querySelectorAll('tr.sector-band')).find(row => {
+        return String(row.getAttribute('data-sector') || '') === sectorName;
+    });
+    if (!bandRow) return;
+
+    const bandMeta = bandRow.querySelector('.band-meta');
+    if (!bandMeta) return;
+
+    const total = getFilteredData()
+        .filter(row => getCiti1SectorName(row.linea) === sectorName)
+        .reduce((sum, row) => sum + getLineaGroupStockFinalNumericValue(row), 0);
+
+    bandMeta.textContent = `${formatNumber(total)} pds`;
+}
+
+function buildLineaGroupHtml(group, columnsCount, collapsedSet, canEditInCurrentView, allowLineaEdit) {
+    const isCollapsed = collapsedSet.has(group.name);
+    const band = `
+                    <tr class="linea-band${isCollapsed ? ' is-collapsed' : ''}" data-linea="${escapeHtmlAttr(group.name)}" title="1 click: contraer/expandir linea | doble click: contraer/expandir todas">
+                        <th colspan="${columnsCount}">
+                            <span class="band-toggle">${isCollapsed ? '+' : '-'}</span>
+                            ${escapeHtml(group.name)}
+                            <span class="band-meta">${formatNumber(group.stockFinalTotal)} pds</span>
+                        </th>
+                    </tr>
+                `;
+
+    const rowsHtml = isCollapsed ? '' : group.rows.map((row, idx) => `
+                    <tr class="${idx % 2 === 0 ? 'group-a' : 'group-b'}">
+                        <td title="${escapeHtmlAttr(row.fDespachoTooltip)}"><strong>${row.fDespachoDisplay}</strong></td>
+                        <td title="${escapeHtmlAttr(row.fIngRealTooltip)}"><strong>${row.fIngRealDisplay}</strong></td>
+                        <td class="${allowLineaEdit ? 'linea-editable-cell' : ''}" ${allowLineaEdit ? `title="Doble click para editar" ${buildRowUpdateMetaAttrs(row)} data-col-name="LINEA" data-current-linea="${escapeHtmlAttr(String(row.linea || '').trim())}" data-current-planta="${escapeHtmlAttr(String(row.planta || '').trim())}"` : ''}>${escapeHtml(String(row.linea || ''))}</td>
+                        <td class="client-cell">${normalizeClientName(row.cliente)}</td>
+                        <td class="pds-cell${canEditInCurrentView ? ' editable-int-cell pcost-editable-cell' : ''}" ${canEditInCurrentView ? `title="1 click para editar" ${buildRowUpdateMetaAttrs(row)} data-col-name="Pcost" data-raw="${escapeHtmlAttr(formatEditableIntegerRaw(row.pcost))}" data-allow-empty="1"` : ''}>${formatEditableIntegerDisplay(row.pcost)}</td>
+                        <td class="oc-cell">${row.op}-${row.corte}</td>
+                        <td title="${escapeHtmlAttr(row.colorTooltip)}">${abbreviate(row.color)}</td>
+                        <td class="pds-cell">${formatNumber(row.pds)}</td>
+                        <td>${normalizePrenda(row.prenda)}</td>
+                        <td>${normalizeCert(row.tipoCert)}</td>
+                        <td>${formatStatusHabilitado(row.estadoHabilitado)}</td>
+                        <td>${formatCompOtros(row)}</td>
+                        <td class="hilo-cell">${formatHiloCostura(row.hiloCostura)}</td>
+                        <td class="avios-cell">${formatEstadoAvios(row.estadoAvios)}</td>
+                        <td class="pds-cell${canEditInCurrentView ? ' editable-int-cell' : ''}" ${canEditInCurrentView ? `title="Doble click para editar" ${buildRowUpdateMetaAttrs(row)} data-col-name="stock inicio" data-raw="${escapeHtmlAttr(formatEditableIntegerRaw(row.stockInicio))}"` : ''}>${formatEditableIntegerDisplay(row.stockInicio)}</td>
+                        <td class="pds-cell${canEditInCurrentView ? ' editable-int-cell' : ''}" ${canEditInCurrentView ? `title="Doble click para editar" ${buildRowUpdateMetaAttrs(row)} data-col-name="salida de linea" data-raw="${escapeHtmlAttr(formatEditableIntegerRaw(row.salidaDeLinea))}"` : ''}>${formatEditableIntegerDisplay(row.salidaDeLinea)}</td>
+                        <td class="pds-cell s-final-cell"><strong>${row.stockFinalDisplay}</strong></td>
+                        <td>${renderEstadoCosturaSelect(row, canEditInCurrentView)}</td>
+                        <td class="liquidacion-cell">${renderLiquidacionCheckbox(row, canEditInCurrentView)}</td>
+                    </tr>
+                `).join('');
+
+    return band + rowsHtml;
 }
 
 function getCollapsedLineSetForCurrentFilter() {
@@ -1518,6 +1873,7 @@ function openEditableIntCellEditor(intCell, options = {}) {
                     finalCell.innerHTML = `<strong>${updatedRow.stockFinalDisplay}</strong>`;
                 }
                 updateRenderedLineaBandTotal(updatedRow.linea);
+                updateRenderedSectorBandTotal(getCiti1SectorName(updatedRow.linea));
                 updateStats();
             }
             if (moveNext) {
@@ -1708,6 +2064,7 @@ function initTableInteractions() {
             const updatedRow = updateLocalRowValue(meta.rowIndex, colName, next);
             if (updatedRow && updatedRow.linea) {
                 updateRenderedLineaBandTotal(updatedRow.linea);
+                updateRenderedSectorBandTotal(getCiti1SectorName(updatedRow.linea));
             }
         } catch (err) {
             console.error('Error guardando estado_costura:', err);
@@ -1874,7 +2231,8 @@ function collectOcSearchResults(query) {
         const rows = getFilteredDataByFilter(filterValue, {
             includeSearch: false,
             query: q
-        }).filter(row => rowMatchesOcSearchQuery(row, q));
+        }).filter(row => rowMatchesOcSearchQuery(row, q))
+            .filter(matchesSelectedColorFilter);
         if (rows.length > 0) {
             results.push({
                 plantFilter: filterValue,
@@ -2325,6 +2683,11 @@ window.addEventListener('DOMContentLoaded', async () => {
     initTableInteractions();
     ensureLineaModalInitialized();
     ensureLiquidacionModalInitialized();
+    ensureColorFilterModalInitialized();
+    const colorHeader = document.getElementById('th-color-filter');
+    if (colorHeader) {
+        colorHeader.addEventListener('contextmenu', openColorFilterFromHeader);
+    }
     const searchInput = document.getElementById('search-oc-input');
     if (searchInput) {
         searchInput.addEventListener('input', () => {
