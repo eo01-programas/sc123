@@ -1,4 +1,4 @@
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwuSrJyL65VHOsgPaMlOcDPEW9n25gl9K-eRxVMjwWTbNIRRu3j2v8oMdDu54Xg_Tk9-A/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyFeQLikf35btz1VTuk46ZuYvqSL-A9G3Yp4YUdqWdMhtTvCTmjNhj4PbsMaiXmS8QCsQ/exec';
 const SHEET_ID = '18cQuwqerdMggAeJ8TCUKA7-gujXsA91-CRMUTNpr8aQ';
 const MONTH_ABBR_ES = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 const ESTADO_COSTURA_OPTIONS = ['', 'Proceso', 'Liquidado', 'Anaquel', 'En Habilitado'];
@@ -7,6 +7,11 @@ const PLANTA_FILTER_OTHERS = '__OTHERS__';
 const PLANTA_ORDER = ['COFACO', 'COFACO 2', 'CITI1', 'CITI2', 'CITI3', 'CITI4'];
 const PLANTA_TOTAL_FILTERS = ['COFACO', 'COFACO 2', 'CITI1', 'CITI2', 'CITI3', 'CITI4', PLANTA_FILTER_OTHERS];
 const LINEA_BAND_CLICK_DELAY_MS = 220;
+const SHIFT_PILL_OPTIONS_BY_PLANT = {
+    COFACO: ['S1', 'S2', 'TN'],
+    CITI1: ['S1', 'S2'],
+    CITI2: ['S1', 'S2']
+};
 const collapsedLineasByFilter = new Map();
 const LINEA_MODAL_PLANTA_OPTIONS = [
     { value: 'COFACO', label: 'COFACO' },
@@ -37,6 +42,10 @@ const liquidacionModalRefs = {
     overlay: null,
     btnNo: null,
     btnYes: null
+};
+const REORDER_MODAL_DELAY_MS = 280;
+let reorderModalState = {
+    overlay: null
 };
 const READ_ONLY_ACCESS_PROFILE = Object.freeze({
     key: 'READ_ONLY',
@@ -540,6 +549,44 @@ function closeLiquidacionModal(options = {}) {
     liquidacionModalState = null;
 }
 
+function ensureReorderModalInitialized() {
+    if (reorderModalState.overlay) return;
+
+    reorderModalState.overlay = document.getElementById('reorder-modal-overlay');
+}
+
+function openReorderModal() {
+    ensureReorderModalInitialized();
+    if (!reorderModalState.overlay) return;
+    reorderModalState.overlay.classList.add('active');
+    reorderModalState.overlay.setAttribute('aria-hidden', 'false');
+}
+
+function closeReorderModal() {
+    ensureReorderModalInitialized();
+    if (!reorderModalState.overlay) return;
+    reorderModalState.overlay.classList.remove('active');
+    reorderModalState.overlay.setAttribute('aria-hidden', 'true');
+}
+
+async function runWithOptionalReorderModal(task, delayMs = REORDER_MODAL_DELAY_MS) {
+    let modalTimer = null;
+    let modalShown = false;
+    const taskPromise = Promise.resolve().then(task);
+
+    modalTimer = setTimeout(() => {
+        modalShown = true;
+        openReorderModal();
+    }, delayMs);
+
+    try {
+        return await taskPromise;
+    } finally {
+        if (modalTimer) clearTimeout(modalTimer);
+        if (modalShown) closeReorderModal();
+    }
+}
+
 async function confirmLiquidacionModal() {
     ensureLiquidacionModalInitialized();
     if (!liquidacionModalState || !liquidacionModalRefs.btnNo || !liquidacionModalRefs.btnYes) return;
@@ -555,12 +602,16 @@ async function confirmLiquidacionModal() {
 
     try {
         const nextValue = buildLiquidacionCostStamp();
-        await saveCellToSheet(meta, 'liquidacion_cost', nextValue);
-        removeLocalRow(meta.rowIndex);
+        await runWithOptionalReorderModal(async () => {
+            await saveCellToSheet(meta, 'liquidacion_cost', nextValue);
+            const deletedRow = removeLocalRow(meta.rowIndex);
+            if (deletedRow) {
+                resequenceLocalPcostByLinea(deletedRow.planta, deletedRow.linea);
+            }
+            updateStats();
+            renderTable();
+        });
         closeLiquidacionModal({ keepCheckboxChecked: true });
-        renderPlantPills();
-        updateStats();
-        renderTable();
     } catch (err) {
         console.error('Error guardando liquidacion_cost:', err);
         alert('No se pudo guardar liquidacion_cost.');
@@ -667,6 +718,138 @@ function normalizePlantFilterValue(value) {
     return String(value || '')
         .trim()
         .toUpperCase();
+}
+
+function getShiftPillOptionsForPlant(plant) {
+    const normalizedPlant = normalizePlantFilterValue(plant);
+    return SHIFT_PILL_OPTIONS_BY_PLANT[normalizedPlant] || [];
+}
+
+function getShiftUserKeyFromAccessProfile() {
+    const profile = getActiveAccessProfile();
+    const normalized = normalizePlantFilterValue(profile && profile.key);
+    return SHIFT_PILL_OPTIONS_BY_PLANT[normalized] ? normalized : '';
+}
+
+function normalizeShiftTokenValue(token) {
+    return String(token || '')
+        .trim()
+        .toUpperCase();
+}
+
+function parseShiftStateTokens(rawState) {
+    return String(rawState || '')
+        .split(/[,;\n]+/)
+        .map(token => normalizeShiftTokenValue(token))
+        .filter(Boolean);
+}
+
+function isShiftTokenForPlant(token, plant, shift) {
+    const normalizedToken = normalizeShiftTokenValue(token);
+    const normalizedPlant = normalizePlantFilterValue(plant);
+    const normalizedShift = normalizeShiftTokenValue(shift);
+    if (!normalizedToken || !normalizedPlant || !normalizedShift) return false;
+
+    if (normalizedPlant === 'COFACO' && normalizedToken === normalizedShift) {
+        return true;
+    }
+
+    return normalizedToken === `${normalizedPlant}-${normalizedShift}`;
+}
+
+function hasShiftTokenForCurrentPlant(shift) {
+    const userKey = getShiftUserKeyFromAccessProfile();
+    if (!userKey) return false;
+    return activeShifts.some(token => isShiftTokenForPlant(token, userKey, shift));
+}
+
+function isShiftOptionEnabledForCurrentPlant(shift) {
+    const userKey = getShiftUserKeyFromAccessProfile();
+    if (!userKey) return false;
+    return getShiftPillOptionsForPlant(userKey).includes(normalizeShiftTokenValue(shift));
+}
+
+function removeShiftTokensForPlantShift(plant, shift) {
+    const normalizedPlant = normalizePlantFilterValue(plant);
+    const normalizedShift = normalizeShiftTokenValue(shift);
+    activeShifts = activeShifts.filter(token => {
+        const normalizedToken = normalizeShiftTokenValue(token);
+        if (normalizedPlant === 'COFACO' && normalizedToken === normalizedShift) {
+            return false;
+        }
+        return normalizedToken !== `${normalizedPlant}-${normalizedShift}`;
+    });
+}
+
+function addShiftTokenForPlant(plant, shift) {
+    const normalizedPlant = normalizePlantFilterValue(plant);
+    const normalizedShift = normalizeShiftTokenValue(shift);
+    const nextToken = `${normalizedPlant}-${normalizedShift}`;
+    if (!activeShifts.includes(nextToken)) {
+        activeShifts.push(nextToken);
+    }
+}
+
+function serializeShiftStateTokens(tokens) {
+    const normalized = [];
+    const seen = new Set();
+
+    (tokens || []).forEach(token => {
+        const normalizedToken = normalizeShiftTokenValue(token);
+        if (!normalizedToken) return;
+
+        const migratedToken = normalizedToken.includes('-')
+            ? normalizedToken
+            : `COFACO-${normalizedToken}`;
+
+        if (seen.has(migratedToken)) return;
+        seen.add(migratedToken);
+        normalized.push(migratedToken);
+    });
+
+    return normalized.join(',');
+}
+
+function sanitizeShiftStateTokens(tokens) {
+    const cleaned = [];
+    const seen = new Set();
+
+    (tokens || []).forEach(token => {
+        const normalizedToken = normalizeShiftTokenValue(token);
+        if (!normalizedToken) return;
+
+        let plant = '';
+        let shift = '';
+
+        if (normalizedToken.includes('-')) {
+            const parts = normalizedToken.split('-');
+            plant = normalizePlantFilterValue(parts.shift());
+            shift = normalizeShiftTokenValue(parts.join('-'));
+        } else {
+            plant = 'COFACO';
+            shift = normalizedToken;
+        }
+
+        const allowedShifts = getShiftPillOptionsForPlant(plant);
+        if (!allowedShifts.includes(shift)) return;
+
+        const canonicalToken = `${plant}-${shift}`;
+        if (seen.has(canonicalToken)) return;
+        seen.add(canonicalToken);
+        cleaned.push(canonicalToken);
+    });
+
+    return cleaned;
+}
+
+function getShiftDisplayTokensForPlant(plant) {
+    const plantKey = normalizePlantFilterValue(plant);
+    const allowed = getShiftPillOptionsForPlant(plantKey);
+    if (!allowed.length) return [];
+
+    return allowed.filter(shift => {
+        return activeShifts.some(token => isShiftTokenForPlant(token, plantKey, shift));
+    });
 }
 
 function renderPlantPills() {
@@ -913,7 +1096,7 @@ function groupRowsByLinea(rows) {
         }
         const group = map.get(name);
         group.rows.push(row);
-        group.stockFinalTotal += getStockFinalNumericValue(row);
+        group.stockFinalTotal += getLineaGroupStockFinalNumericValue(row);
     });
 
     const groups = Array.from(map.values());
@@ -939,7 +1122,7 @@ function updateRenderedLineaBandTotal(lineaValue) {
 
     const total = getFilteredData()
         .filter(row => getLineaGroupName(row.linea) === lineaName)
-        .reduce((sum, row) => sum + getStockFinalNumericValue(row), 0);
+        .reduce((sum, row) => sum + getLineaGroupStockFinalNumericValue(row), 0);
 
     bandMeta.textContent = `${formatNumber(total)} pds`;
 }
@@ -1044,6 +1227,21 @@ function getStockFinalNumericValue(row) {
     return (stock === null ? 0 : stock) - (salida === null ? 0 : salida);
 }
 
+function getLineaGroupStockFinalNumericValue(row) {
+    const baseValue = getStockFinalNumericValue(row);
+    const currentFilter = String(selectedPlantaFilter || '').toUpperCase();
+    if (currentFilter !== 'CITI1' && currentFilter !== 'CITI2' && currentFilter !== 'CITI3' && currentFilter !== 'CITI4') {
+        return baseValue;
+    }
+
+    const estado = normalizeEstadoCostura(row && row.estadoCostura);
+    if (estado === 'OK COSTURA') {
+        return 0;
+    }
+
+    return baseValue;
+}
+
 function normalizeEstadoCostura(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
@@ -1057,7 +1255,27 @@ function normalizeEstadoCostura(value) {
     if (normalized === 'LIQUIDADO') return 'Liquidado';
     if (normalized === 'ANAQUEL') return 'Anaquel';
     if (normalized === 'EN HABILITADO') return 'En Habilitado';
+    if (normalized === 'EN HAB CITI1') return 'En hab CITI1';
+    if (normalized === 'EN HAB CITI2') return 'En hab CITI2';
+    if (normalized === 'EN HAB CITI3') return 'En hab CITI3';
+    if (normalized === 'EN HAB CITI4') return 'En hab CITI4';
+    if (normalized === 'OK COSTURA') return 'OK COSTURA';
     return '';
+}
+
+function getEstadoCosturaOptionsForCurrentFilter() {
+    const options = ESTADO_COSTURA_OPTIONS.slice();
+    const currentFilter = String(selectedPlantaFilter || '').toUpperCase();
+    if (currentFilter === 'CITI1') {
+        options.push('En hab CITI1', 'OK COSTURA');
+    } else if (currentFilter === 'CITI2') {
+        options.push('En hab CITI2', 'OK COSTURA');
+    } else if (currentFilter === 'CITI3') {
+        options.push('En hab CITI3', 'OK COSTURA');
+    } else if (currentFilter === 'CITI4') {
+        options.push('En hab CITI4', 'OK COSTURA');
+    }
+    return options;
 }
 
 function getDefaultEstadoCosturaFromHab(row) {
@@ -1073,7 +1291,7 @@ function renderEstadoCosturaSelect(row, editable = true) {
     if (!editable) {
         return `<span class="estado-costura-readonly">${escapeHtml(current || '-')}</span>`;
     }
-    const optionsHtml = ESTADO_COSTURA_OPTIONS.map(option => {
+    const optionsHtml = getEstadoCosturaOptionsForCurrentFilter().map(option => {
         const label = option || 'Seleccionar';
         const selected = option === current ? ' selected' : '';
         return `<option value="${escapeHtmlAttr(option)}"${selected}>${escapeHtml(label)}</option>`;
@@ -1127,6 +1345,27 @@ function removeLocalRow(rowIndex) {
     return removed;
 }
 
+function resequenceLocalPcostByLinea(plantaValue, lineaValue) {
+    const plantNorm = normalizePlantFilterValue(plantaValue);
+    const lineaNorm = String(lineaValue || '').trim();
+    if (!lineaNorm) return;
+
+    const rows = allData.filter(row => {
+        return normalizePlantFilterValue(row.planta) === plantNorm
+            && String(row.linea || '').trim() === lineaNorm;
+    });
+
+    if (!rows.length) return;
+
+    rows.sort((a, b) => compareRowsWithinLinea(a, b));
+    rows.forEach((row, idx) => {
+        row.pcost = idx + 1;
+    });
+
+    ocSearchDataStamp += 1;
+    ocSearchState = null;
+}
+
 function readRowMeta(dataset) {
     const rowIndex = parseInt(dataset.rowIndex, 10);
     if (!Number.isFinite(rowIndex) || rowIndex < 2) return null;
@@ -1168,6 +1407,8 @@ async function saveCellToSheet(meta, colName, value) {
     if (!result || result.result !== 'success') {
         throw new Error((result && result.message) || 'No se pudo guardar');
     }
+
+    return result;
 }
 
 function findNextEditableCellInColumn(currentCell, colName) {
@@ -1319,7 +1560,7 @@ async function fetchShiftState() {
         const response = await fetch(`${WEB_APP_URL}?action=getShiftState`);
         const data = await response.json();
         const stateStr = data.state || "";
-        activeShifts = stateStr ? stateStr.split(',').filter(Boolean) : [];
+        activeShifts = sanitizeShiftStateTokens(parseShiftStateTokens(stateStr));
         renderShiftPills();
     } catch (err) {
         console.error('Error fetching shift state:', err);
@@ -1327,13 +1568,14 @@ async function fetchShiftState() {
 }
 
 function renderShiftPills() {
-    const isCofaco = selectedPlantaFilter === 'COFACO';
+    const profile = getActiveAccessProfile();
+    const shiftOwner = getShiftUserKeyFromAccessProfile();
     const headerTotals = document.querySelector('.header-totals');
     if (!headerTotals) return;
 
     let container = document.getElementById('shift-pills-container');
 
-    if (!isCofaco) {
+    if (!shiftOwner) {
         if (container) container.remove();
         return;
     }
@@ -1346,9 +1588,8 @@ function renderShiftPills() {
         headerTotals.insertBefore(container, headerTotals.firstChild);
     }
 
-    const shifts = ['S1', 'S2', 'TN'];
-    container.innerHTML = shifts.map(s => {
-        const active = activeShifts.includes(s) ? ' active' : '';
+    container.innerHTML = getShiftPillOptionsForPlant(shiftOwner).map(s => {
+        const active = hasShiftTokenForCurrentPlant(s) ? ' active' : '';
         return `
             <div class="shift-pill${active}" onclick="toggleShift('${s}')">
                 <span class="check-icon">✔</span>
@@ -1359,16 +1600,21 @@ function renderShiftPills() {
 }
 
 window.toggleShift = async function (shift) {
-    const wasActive = activeShifts.includes(shift);
+    const plant = getShiftUserKeyFromAccessProfile();
+    if (!plant) return;
+    if (!isShiftOptionEnabledForCurrentPlant(shift)) return;
+
+    const wasActive = hasShiftTokenForCurrentPlant(shift);
     if (wasActive) {
-        activeShifts = activeShifts.filter(s => s !== shift);
+        removeShiftTokensForPlantShift(plant, shift);
     } else {
-        activeShifts.push(shift);
+        addShiftTokenForPlant(plant, shift);
     }
     renderShiftPills(); // Actualización optimista
 
-    const stateStr = activeShifts.join(',');
-    showCosturaToast(`Actualizando turno ${shift}...`, 'info');
+    activeShifts = sanitizeShiftStateTokens(activeShifts);
+    const stateStr = serializeShiftStateTokens(activeShifts);
+    showCosturaToast(`Actualizando ${plant}-${shift}...`, 'info');
 
     try {
         const response = await fetch(WEB_APP_URL, {
@@ -1380,7 +1626,7 @@ window.toggleShift = async function (shift) {
         });
         const result = await response.json();
         if (result.result === 'success') {
-            showCosturaToast(`Turno ${shift} actualizado`, 'success');
+            showCosturaToast(`Turno ${plant}-${shift} actualizado`, 'success');
         } else {
             throw new Error(result.message || 'Error en servidor');
         }
@@ -1389,9 +1635,9 @@ window.toggleShift = async function (shift) {
         showCosturaToast('Error al sincronizar turno', 'error');
         // Revertir localmente en caso de error
         if (wasActive) {
-            if (!activeShifts.includes(shift)) activeShifts.push(shift);
+            addShiftTokenForPlant(plant, shift);
         } else {
-            activeShifts = activeShifts.filter(s => s !== shift);
+            removeShiftTokensForPlantShift(plant, shift);
         }
         renderShiftPills();
     }
@@ -1459,7 +1705,10 @@ function initTableInteractions() {
             await saveCellToSheet(meta, colName, next);
             select.dataset.current = next;
             select.value = next;
-            updateLocalRowValue(meta.rowIndex, colName, next);
+            const updatedRow = updateLocalRowValue(meta.rowIndex, colName, next);
+            if (updatedRow && updatedRow.linea) {
+                updateRenderedLineaBandTotal(updatedRow.linea);
+            }
         } catch (err) {
             console.error('Error guardando estado_costura:', err);
             alert('No se pudo guardar estado_costura.');
@@ -2089,3 +2338,77 @@ window.addEventListener('DOMContentLoaded', async () => {
     reloadData();
     fetchShiftState();
 });
+
+function renderShiftPills() {
+    const shiftOwner = getShiftUserKeyFromAccessProfile();
+    const headerTotals = document.querySelector('.header-totals');
+    if (!headerTotals) return;
+
+    let container = document.getElementById('shift-pills-container');
+
+    if (!shiftOwner) {
+        if (container) container.remove();
+        return;
+    }
+
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'shift-pills-container';
+        container.className = 'shift-pills-container';
+        headerTotals.insertBefore(container, headerTotals.firstChild);
+    }
+
+    const shifts = getShiftPillOptionsForPlant(shiftOwner);
+    container.innerHTML = shifts.map(s => {
+        const active = hasShiftTokenForCurrentPlant(s) ? ' active' : '';
+        return `
+            <div class="shift-pill${active}" onclick="toggleShift('${s}')">
+                <span class="check-icon">&#10003;</span>
+                ${s}
+            </div>
+        `;
+    }).join('');
+}
+
+window.toggleShift = async function (shift) {
+    const plant = getShiftUserKeyFromAccessProfile();
+    if (!plant) return;
+    if (!isShiftOptionEnabledForCurrentPlant(shift)) return;
+
+    const wasActive = hasShiftTokenForCurrentPlant(shift);
+    if (wasActive) {
+        removeShiftTokensForPlantShift(plant, shift);
+    } else {
+        addShiftTokenForPlant(plant, shift);
+    }
+    renderShiftPills();
+
+    activeShifts = sanitizeShiftStateTokens(activeShifts);
+    const stateStr = serializeShiftStateTokens(activeShifts);
+    showCosturaToast(`Actualizando ${plant}-${shift}...`, 'info');
+
+    try {
+        const response = await fetch(WEB_APP_URL, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'updateShiftState',
+                state: stateStr
+            })
+        });
+        const result = await response.json();
+        if (result.result === 'success') {
+            showCosturaToast(`Turno ${plant}-${shift} actualizado`, 'success');
+        } else {
+            throw new Error(result.message || 'Error en servidor');
+        }
+    } catch (err) {
+        console.error('Error updating shift state:', err);
+        showCosturaToast('Error al sincronizar turno', 'error');
+        if (wasActive) {
+            addShiftTokenForPlant(plant, shift);
+        } else {
+            removeShiftTokensForPlantShift(plant, shift);
+        }
+        renderShiftPills();
+    }
+};
