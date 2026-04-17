@@ -1362,6 +1362,13 @@ function groupRowsByLinea(rows) {
 
 function getSectorConfigForPlant(plantValue) {
     const plant = String(plantValue || '').trim().toUpperCase();
+    if (plant === 'COFACO') {
+        return [
+            { name: 'SECTOR 1', min: 1, max: 10 },
+            { name: 'SECTOR 2', min: 11, max: 19 },
+            { name: 'TURNO NOCHE', min: 20, max: 29 }
+        ];
+    }
     if (plant === 'CITI1') {
         return [
             { name: 'SECTOR 1', min: 1, max: 14 },
@@ -1393,7 +1400,8 @@ function compareSectorNames(a, b) {
     const order = {
         'SECTOR 1': 1,
         'SECTOR 2': 2,
-        'SIN SECTOR': 3
+        'TURNO NOCHE': 3,
+        'SIN SECTOR': 4
     };
     return (order[a] || 99) - (order[b] || 99);
 }
