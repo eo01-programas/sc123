@@ -48,7 +48,7 @@
                         <th style="width: 3.22%;">CLIENTE</th>
                         <th style="width: 3.05%; text-align:center;">n</th>
                         <th style="width: 5.86%;">OC</th>
-                        <th style="width: 7.03%;">COLOR</th>
+                        <th id="th-color-filter" class="color-filter-header" style="width: 7.03%;" title="Click derecho para filtrar por COLOR">COLOR</th>
                         <th style="width: 2.93%; text-align:center;">PDS</th>
                         <th style="width: 5.50%;">PRENDA</th>
                         <th style="width: 5.86%;">CERTIFICADO</th>
@@ -115,6 +115,16 @@
                 <div class="reorder-modal-spinner" aria-hidden="true"></div>
                 <p class="reorder-modal-copy">Ajustando la numeracion por LINEA. Un momento, por favor.</p>
             </div>
+        </div>
+    </div>
+
+    <div id="color-filter-popover" class="color-filter-popover" aria-hidden="true">
+        <div class="color-filter-popover-header">
+            <span>Filtrar por: COLOR</span>
+        </div>
+        <div class="color-filter-popover-body">
+            <select id="color-filter-select"></select>
+            <button type="button" id="color-filter-clear" class="color-filter-clear">Todos</button>
         </div>
     </div>
 
