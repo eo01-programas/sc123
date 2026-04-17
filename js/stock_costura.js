@@ -1243,11 +1243,11 @@ function renderTable() {
 
     const columnsCount = 19;
     const collapsedSet = getCollapsedLineSetForCurrentFilter();
-    const isCiti1SectorView = String(selectedPlantaFilter || '').toUpperCase() === 'CITI1';
+    const sectorConfig = getSectorConfigForPlant(selectedPlantaFilter);
     let lineGroupNames = [];
 
-    if (isCiti1SectorView) {
-        const sectorGroups = groupRowsByCiti1Sector(filtered);
+    if (sectorConfig) {
+        const sectorGroups = groupRowsBySector(filtered, selectedPlantaFilter);
         const validGroupNames = new Set();
         sectorGroups.forEach(sectorGroup => {
             (sectorGroup.lineGroups || []).forEach(group => validGroupNames.add(group.name));
@@ -1360,17 +1360,36 @@ function groupRowsByLinea(rows) {
     return groups;
 }
 
-function getCiti1SectorName(lineaValue) {
+function getSectorConfigForPlant(plantValue) {
+    const plant = String(plantValue || '').trim().toUpperCase();
+    if (plant === 'CITI1') {
+        return [
+            { name: 'SECTOR 1', min: 1, max: 14 },
+            { name: 'SECTOR 2', min: 15, max: 30 }
+        ];
+    }
+    if (plant === 'CITI2') {
+        return [
+            { name: 'SECTOR 1', min: 1, max: 6 },
+            { name: 'SECTOR 2', min: 7, max: 9 }
+        ];
+    }
+    return null;
+}
+
+function getSectorNameForPlant(lineaValue, plantValue) {
+    const config = getSectorConfigForPlant(plantValue);
+    if (!config) return '';
+
     const raw = String(lineaValue || '').trim();
     if (!/^\d+$/.test(raw)) return 'SIN SECTOR';
 
     const lineNum = parseInt(raw, 10);
-    if (lineNum >= 1 && lineNum <= 14) return 'SECTOR 1';
-    if (lineNum >= 15 && lineNum <= 30) return 'SECTOR 2';
-    return 'SIN SECTOR';
+    const matched = config.find(range => lineNum >= range.min && lineNum <= range.max);
+    return matched ? matched.name : 'SIN SECTOR';
 }
 
-function compareCiti1SectorNames(a, b) {
+function compareSectorNames(a, b) {
     const order = {
         'SECTOR 1': 1,
         'SECTOR 2': 2,
@@ -1379,11 +1398,11 @@ function compareCiti1SectorNames(a, b) {
     return (order[a] || 99) - (order[b] || 99);
 }
 
-function groupRowsByCiti1Sector(rows) {
+function groupRowsBySector(rows, plantValue) {
     const map = new Map();
 
     (rows || []).forEach(row => {
-        const sectorName = getCiti1SectorName(row.linea);
+        const sectorName = getSectorNameForPlant(row.linea, plantValue);
         if (!map.has(sectorName)) {
             map.set(sectorName, { name: sectorName, stockFinalTotal: 0, rows: [] });
         }
@@ -1393,7 +1412,7 @@ function groupRowsByCiti1Sector(rows) {
     });
 
     const sectors = Array.from(map.values());
-    sectors.sort((a, b) => compareCiti1SectorNames(a.name, b.name));
+    sectors.sort((a, b) => compareSectorNames(a.name, b.name));
     sectors.forEach(sectorGroup => {
         sectorGroup.lineGroups = groupRowsByLinea(sectorGroup.rows);
     });
@@ -1421,7 +1440,8 @@ function updateRenderedLineaBandTotal(lineaValue) {
 }
 
 function updateRenderedSectorBandTotal(sectorValue) {
-    if (String(selectedPlantaFilter || '').toUpperCase() !== 'CITI1') return;
+    const plantValue = String(selectedPlantaFilter || '').toUpperCase();
+    if (!getSectorConfigForPlant(plantValue)) return;
     const sectorName = String(sectorValue || '');
     if (!sectorName) return;
 
@@ -1437,7 +1457,7 @@ function updateRenderedSectorBandTotal(sectorValue) {
     if (!bandMeta) return;
 
     const total = getFilteredData()
-        .filter(row => getCiti1SectorName(row.linea) === sectorName)
+        .filter(row => getSectorNameForPlant(row.linea, plantValue) === sectorName)
         .reduce((sum, row) => sum + getLineaGroupStockFinalNumericValue(row), 0);
 
     bandMeta.textContent = `${formatNumber(total)} pds`;
@@ -1873,7 +1893,7 @@ function openEditableIntCellEditor(intCell, options = {}) {
                     finalCell.innerHTML = `<strong>${updatedRow.stockFinalDisplay}</strong>`;
                 }
                 updateRenderedLineaBandTotal(updatedRow.linea);
-                updateRenderedSectorBandTotal(getCiti1SectorName(updatedRow.linea));
+                updateRenderedSectorBandTotal(getSectorNameForPlant(updatedRow.linea, selectedPlantaFilter));
                 updateStats();
             }
             if (moveNext) {
@@ -2064,7 +2084,7 @@ function initTableInteractions() {
             const updatedRow = updateLocalRowValue(meta.rowIndex, colName, next);
             if (updatedRow && updatedRow.linea) {
                 updateRenderedLineaBandTotal(updatedRow.linea);
-                updateRenderedSectorBandTotal(getCiti1SectorName(updatedRow.linea));
+                updateRenderedSectorBandTotal(getSectorNameForPlant(updatedRow.linea, selectedPlantaFilter));
             }
         } catch (err) {
             console.error('Error guardando estado_costura:', err);
