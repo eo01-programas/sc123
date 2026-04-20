@@ -1102,7 +1102,25 @@ html {
             background: #ffffff;
         }
 
+        .split-oc-linea-input {
+            width: 100%;
+            border: 1px solid var(--gray-300);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 13px;
+            font-family: 'Calibri', 'Inter', sans-serif;
+            color: var(--gray-800);
+            outline: none;
+            text-transform: uppercase;
+            background: #ffffff;
+        }
+
         .split-oc-pds-input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+        }
+
+        .split-oc-linea-input:focus {
             border-color: var(--primary);
             box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
         }
