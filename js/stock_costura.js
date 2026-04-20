@@ -1,4 +1,4 @@
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyFeQLikf35btz1VTuk46ZuYvqSL-A9G3Yp4YUdqWdMhtTvCTmjNhj4PbsMaiXmS8QCsQ/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyOIzkHZG_Pf1pTixqFXsqywE7AbR1JDXXwNVdrUc9twGCSWUG6JHJ3wtwRBT32qesnWQ/exec';
 const SHEET_ID = '18cQuwqerdMggAeJ8TCUKA7-gujXsA91-CRMUTNpr8aQ';
 const MONTH_ABBR_ES = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 const ESTADO_COSTURA_OPTIONS = ['', 'Proceso', 'Liquidado', 'Anaquel', 'En Habilitado'];
@@ -30,6 +30,31 @@ let activeOcSearchQuery = '';
 let ocSearchState = null;
 let ocSearchDataStamp = 0;
 let selectedColorFilter = '';
+let splitOcContextMenuState = {
+    menu: null,
+    rowIndex: null
+};
+let splitOcModalState = null;
+const splitOcModalRefs = {
+    overlay: null,
+    title: null,
+    subtitle: null,
+    note: null,
+    total: null,
+    tbody: null,
+    btnCancel: null,
+    btnSave: null
+};
+let devolucionOcModalState = null;
+const devolucionOcModalRefs = {
+    overlay: null,
+    title: null,
+    subtitle: null,
+    tbody: null,
+    plantaSelect: null,
+    btnCancel: null,
+    btnSave: null
+};
 let lineaModalState = null;
 const lineaModalRefs = {
     overlay: null,
@@ -272,15 +297,24 @@ async function fetchDataViaWebApp() {
     return data;
 }
 
-async function reloadData() {
+async function reloadData(options = {}) {
     showLoader(true);
     try {
         let data;
-        try {
-            data = await fetchDataViaGviz();
-        } catch (gvizError) {
-            console.warn('Fallo gviz, usando fallback WEB_APP_URL:', gvizError);
-            data = await fetchDataViaWebApp();
+        if (options && options.preferWebApp) {
+            try {
+                data = await fetchDataViaWebApp();
+            } catch (webAppError) {
+                console.warn('Fallo WEB_APP_URL, usando fallback gviz:', webAppError);
+                data = await fetchDataViaGviz();
+            }
+        } else {
+            try {
+                data = await fetchDataViaGviz();
+            } catch (gvizError) {
+                console.warn('Fallo gviz, usando fallback WEB_APP_URL:', gvizError);
+                data = await fetchDataViaWebApp();
+            }
         }
 
         processData(data);
@@ -1491,7 +1525,7 @@ function buildLineaGroupHtml(group, columnsCount, collapsedSet, canEditInCurrent
                         <td class="client-cell">${normalizeClientName(row.cliente)}</td>
                         <td class="pds-cell${canEditInCurrentView ? ' editable-int-cell pcost-editable-cell' : ''}" ${canEditInCurrentView ? `title="1 click para editar" ${buildRowUpdateMetaAttrs(row)} data-col-name="Pcost" data-raw="${escapeHtmlAttr(formatEditableIntegerRaw(row.pcost))}" data-allow-empty="1"` : ''}>${formatEditableIntegerDisplay(row.pcost)}</td>
                         <td class="oc-cell">${row.op}-${row.corte}</td>
-                        <td title="${escapeHtmlAttr(row.colorTooltip)}">${abbreviate(row.color)}</td>
+                        <td class="${canEditInCurrentView ? 'color-split-cell' : ''}" ${canEditInCurrentView ? `title="${escapeHtmlAttr(row.colorTooltip)} | Click derecho: partir la OC o devolucion" ${buildRowUpdateMetaAttrs(row)}` : `title="${escapeHtmlAttr(row.colorTooltip)}"`}>${abbreviate(row.color)}</td>
                         <td class="pds-cell">${formatNumber(row.pds)}</td>
                         <td>${normalizePrenda(row.prenda)}</td>
                         <td>${normalizeCert(row.tipoCert)}</td>
@@ -1570,7 +1604,7 @@ function bindLineaBandInteractions(lineaNames) {
 }
 
 function buildRowUpdateMetaAttrs(row) {
-    return `data-row-index="${escapeHtmlAttr(row.rowIndex)}" data-source-op="${escapeHtmlAttr(row.op)}" data-source-corte="${escapeHtmlAttr(row.corte)}" data-source-op-tela="${escapeHtmlAttr(row.opTela)}" data-source-partida="${escapeHtmlAttr(row.partida)}" data-source-color="${escapeHtmlAttr(row.color)}"`;
+    return `data-row-index="${escapeHtmlAttr(row.rowIndex)}" data-source-op="${escapeHtmlAttr(row.op)}" data-source-corte="${escapeHtmlAttr(row.corte)}" data-source-op-tela="${escapeHtmlAttr(row.opTela)}" data-source-partida="${escapeHtmlAttr(row.partida)}" data-source-color="${escapeHtmlAttr(row.color)}" data-source-pds="${escapeHtmlAttr(formatEditableIntegerRaw(row.pds))}"`;
 }
 
 function parseEditableInteger(value) {
@@ -1758,7 +1792,8 @@ function readRowMeta(dataset) {
         sourceCorte: dataset.sourceCorte || '',
         sourceOpTela: dataset.sourceOpTela || '',
         sourcePartida: dataset.sourcePartida || '',
-        sourceColor: dataset.sourceColor || ''
+        sourceColor: dataset.sourceColor || '',
+        sourcePds: dataset.sourcePds || ''
     };
 }
 
@@ -1792,6 +1827,575 @@ async function saveCellToSheet(meta, colName, value) {
     }
 
     return result;
+}
+
+function normalizeSplitCorteBase(corteValue) {
+    const raw = String(corteValue || '').trim();
+    if (!raw) return '';
+    const parts = raw.split('-');
+    if (parts.length >= 2 && /^\d+$/.test(parts[parts.length - 1])) {
+        return parts.slice(0, -1).join('-');
+    }
+    return raw;
+}
+
+function getRowByRowIndex(rowIndex) {
+    return allData.find(row => Number(row.rowIndex) === Number(rowIndex)) || null;
+}
+
+function getSplitOcBaseFromRow(row) {
+    const op = String((row && row.op) || '').trim();
+    const corteBase = normalizeSplitCorteBase(row && row.corte);
+    const baseOc = op && corteBase ? `${op}-${corteBase}` : (op || corteBase);
+    return {
+        op,
+        corteBase,
+        baseOc
+    };
+}
+
+function formatSplitOcLabel(op, corteBase, suffixIndex) {
+    const suffix = Number(suffixIndex);
+    const safeSuffix = Number.isFinite(suffix) && suffix > 0 ? suffix : 1;
+    const safeOp = String(op || '').trim();
+    const safeBase = String(corteBase || '').trim();
+    return safeOp && safeBase ? `${safeOp}-${safeBase}-${safeSuffix}` : '';
+}
+
+function ensureSplitOcModalInitialized() {
+    if (splitOcModalRefs.overlay) return;
+
+    splitOcModalRefs.overlay = document.getElementById('split-oc-modal-overlay');
+    splitOcModalRefs.title = document.getElementById('split-oc-modal-title');
+    splitOcModalRefs.subtitle = document.getElementById('split-oc-modal-subtitle');
+    splitOcModalRefs.note = document.getElementById('split-oc-modal-note');
+    splitOcModalRefs.total = document.getElementById('split-oc-modal-total');
+    splitOcModalRefs.tbody = document.getElementById('split-oc-modal-tbody');
+    splitOcModalRefs.btnCancel = document.getElementById('split-oc-modal-cancel');
+    splitOcModalRefs.btnSave = document.getElementById('split-oc-modal-save');
+
+    if (!splitOcModalRefs.overlay || !splitOcModalRefs.tbody) return;
+
+    splitOcModalRefs.tbody.addEventListener('click', onSplitOcModalClick);
+    splitOcModalRefs.tbody.addEventListener('input', onSplitOcModalInput);
+}
+
+function ensureSplitOcContextMenuInitialized() {
+    if (splitOcContextMenuState.menu) return;
+    splitOcContextMenuState.menu = document.getElementById('split-oc-context-menu');
+}
+
+function updateSplitOcModalSummary() {
+    if (!splitOcModalState || !splitOcModalRefs.total) return;
+    const parts = Array.isArray(splitOcModalState.parts) ? splitOcModalState.parts : [];
+    let total = 0;
+    let hasPending = false;
+
+    parts.forEach(part => {
+        const raw = String(part && part.pds !== undefined && part.pds !== null ? part.pds : '').trim();
+        if (!raw) {
+            hasPending = true;
+            return;
+        }
+        if (!/^\d+$/.test(raw)) {
+            hasPending = true;
+            return;
+        }
+        total += parseInt(raw, 10);
+    });
+
+    const originalRaw = splitOcModalState.originalPds;
+    const original = (originalRaw === null || originalRaw === undefined || originalRaw === '')
+        ? null
+        : Number(originalRaw);
+    const totalLabel = formatNumber(total);
+    const originalLabel = original === null ? '-' : formatNumber(original);
+    splitOcModalRefs.total.textContent = `Total PDS: ${totalLabel} / ${originalLabel}`;
+    splitOcModalRefs.total.classList.toggle('ok', original !== null && total === original && !hasPending);
+    splitOcModalRefs.total.classList.toggle('warn', original !== null && (total !== original || hasPending));
+
+    if (splitOcModalRefs.note) {
+        if (original === null) {
+            splitOcModalRefs.note.textContent = 'Complete los PDS y use + para agregar mas particiones.';
+        } else if (total === original && !hasPending) {
+            splitOcModalRefs.note.textContent = 'La suma coincide con el PDS original.';
+        } else {
+            splitOcModalRefs.note.textContent = 'La suma de PDS debe coincidir con el total original.';
+        }
+    }
+}
+
+function renderSplitOcModalRows() {
+    if (!splitOcModalRefs.tbody || !splitOcModalState) return;
+    const parts = Array.isArray(splitOcModalState.parts) && splitOcModalState.parts.length
+        ? splitOcModalState.parts
+        : [{ pds: '' }];
+    splitOcModalState.parts = parts;
+
+    const op = String(splitOcModalState.op || '').trim();
+    const corteBase = String(splitOcModalState.corteBase || '').trim();
+
+    splitOcModalRefs.tbody.innerHTML = parts.map((part, idx) => {
+        const ocLabel = formatSplitOcLabel(op, corteBase, idx + 1);
+        const rawPds = String(part && part.pds !== undefined && part.pds !== null ? part.pds : '').trim();
+        const actionButton = idx === 0
+            ? '<button type="button" class="split-oc-row-btn add" data-split-action="add" title="Agregar otra particion">+</button>'
+            : `<button type="button" class="split-oc-row-btn remove" data-split-action="remove" data-split-index="${idx}" title="Eliminar particion">&times;</button>`;
+
+        return `
+            <tr data-split-index="${idx}">
+                <td class="split-oc-label" title="${escapeHtmlAttr(ocLabel)}">${escapeHtml(ocLabel)}</td>
+                <td>
+                    <input type="text" class="split-oc-pds-input" inputmode="numeric" pattern="\\d*"
+                        data-split-index="${idx}" value="${escapeHtmlAttr(rawPds)}" placeholder="Ingrese PDS">
+                </td>
+                <td class="split-oc-action-cell">${actionButton}</td>
+            </tr>
+        `;
+    }).join('');
+
+    updateSplitOcModalSummary();
+}
+
+function closeSplitOcContextMenu() {
+    ensureSplitOcContextMenuInitialized();
+    const menu = splitOcContextMenuState.menu;
+    if (menu) {
+        menu.classList.remove('active');
+        menu.setAttribute('aria-hidden', 'true');
+    }
+    splitOcContextMenuState.rowIndex = null;
+}
+
+function positionSplitOcContextMenu(event) {
+    const menu = splitOcContextMenuState.menu;
+    if (!menu) return;
+
+    const menuWidth = menu.offsetWidth || 220;
+    const menuHeight = menu.offsetHeight || 48;
+    const margin = 8;
+    const maxLeft = Math.max(margin, window.innerWidth - menuWidth - margin);
+    const maxTop = Math.max(margin, window.innerHeight - menuHeight - margin);
+    const left = Math.min(Math.max(margin, event.clientX), maxLeft);
+    const top = Math.min(Math.max(margin, event.clientY), maxTop);
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+}
+
+function openSplitOcContextMenu(event, rowIndex) {
+    ensureSplitOcContextMenuInitialized();
+    const menu = splitOcContextMenuState.menu;
+    if (!menu) return false;
+
+    closeSplitOcContextMenu();
+    splitOcContextMenuState.rowIndex = rowIndex;
+    menu.classList.add('active');
+    menu.setAttribute('aria-hidden', 'false');
+
+    if (event) {
+        positionSplitOcContextMenu(event);
+    }
+
+    return true;
+}
+
+function closeSplitOcModal() {
+    ensureSplitOcModalInitialized();
+    const overlay = splitOcModalRefs.overlay;
+    if (overlay) {
+        overlay.classList.remove('active');
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    splitOcModalState = null;
+}
+
+function openSplitOcModalFromRow(rowIndex) {
+    const row = getRowByRowIndex(rowIndex);
+    if (!row) return;
+    if (!canEditRowMeta({ rowIndex })) return;
+
+    const baseInfo = getSplitOcBaseFromRow(row);
+    if (!baseInfo.baseOc) {
+        alert('No se pudo resolver la OC de la fila seleccionada.');
+        return;
+    }
+    const originalPds = parseEditableInteger(row.pds);
+    splitOcModalState = {
+        rowIndex: Number(row.rowIndex),
+        sourceOp: String(row.op || '').trim(),
+        sourceCorte: String(row.corte || '').trim(),
+        sourceOpTela: String(row.opTela || '').trim(),
+        sourcePartida: String(row.partida || '').trim(),
+        sourceColor: String(row.color || '').trim(),
+        sourcePds: String(row.pds === null || row.pds === undefined ? '' : row.pds).trim(),
+        op: baseInfo.op,
+        corteBase: baseInfo.corteBase,
+        baseOc: baseInfo.baseOc,
+        color: String(row.color || '').trim(),
+        originalPds: Number.isFinite(originalPds) ? originalPds : null,
+        parts: [{
+            pds: Number.isFinite(originalPds) ? String(originalPds) : ''
+        }]
+    };
+
+    ensureSplitOcModalInitialized();
+    if (!splitOcModalRefs.overlay) return;
+
+    if (splitOcModalRefs.title) {
+        splitOcModalRefs.title.textContent = `OC: ${splitOcModalState.baseOc || '-'}`;
+    }
+    if (splitOcModalRefs.subtitle) {
+        splitOcModalRefs.subtitle.textContent = `COLOR: ${splitOcModalState.color || '-'} | PDS: ${splitOcModalState.originalPds === null ? '-' : formatNumber(splitOcModalState.originalPds)}`;
+    }
+    if (splitOcModalRefs.note) {
+        splitOcModalRefs.note.textContent = 'La primera fila se guardara como sufijo -1.';
+    }
+
+    renderSplitOcModalRows();
+    splitOcModalRefs.overlay.classList.add('active');
+    splitOcModalRefs.overlay.setAttribute('aria-hidden', 'false');
+}
+
+function onSplitOcModalClick(event) {
+    const button = event.target.closest('button[data-split-action]');
+    if (!button || !splitOcModalState) return;
+
+    const action = String(button.dataset.splitAction || '').trim().toLowerCase();
+    if (action === 'add') {
+        splitOcModalState.parts.push({ pds: '' });
+        renderSplitOcModalRows();
+        const lastInput = splitOcModalRefs.tbody ? splitOcModalRefs.tbody.querySelector('tr:last-child input.split-oc-pds-input') : null;
+        if (lastInput) {
+            setTimeout(() => {
+                try {
+                    lastInput.focus();
+                    lastInput.select();
+                } catch (e) { }
+            }, 0);
+        }
+        return;
+    }
+
+    if (action === 'remove') {
+        const idx = parseInt(button.dataset.splitIndex, 10);
+        if (!Number.isInteger(idx) || idx < 1) return;
+        splitOcModalState.parts.splice(idx, 1);
+        renderSplitOcModalRows();
+    }
+}
+
+function onSplitOcModalInput(event) {
+    const input = event.target.closest('input.split-oc-pds-input');
+    if (!input || !splitOcModalState) return;
+
+    const idx = parseInt(input.dataset.splitIndex, 10);
+    if (!Number.isInteger(idx) || idx < 0 || !splitOcModalState.parts[idx]) return;
+
+    const sanitized = String(input.value || '').replace(/[^\d]/g, '');
+    if (input.value !== sanitized) {
+        input.value = sanitized;
+    }
+    splitOcModalState.parts[idx].pds = sanitized;
+    updateSplitOcModalSummary();
+}
+
+window.abrirSplitOcModalDesdeMenu = function () {
+    const rowIndex = splitOcContextMenuState.rowIndex;
+    closeSplitOcContextMenu();
+    if (!Number.isInteger(rowIndex) || rowIndex < 1) return;
+    openSplitOcModalFromRow(rowIndex);
+};
+
+window.addSplitOcRow = function () {
+    if (!splitOcModalState) return;
+    splitOcModalState.parts.push({ pds: '' });
+    renderSplitOcModalRows();
+};
+
+window.removeSplitOcRow = function (idx) {
+    if (!splitOcModalState || !Array.isArray(splitOcModalState.parts)) return;
+    if (!Number.isInteger(idx) || idx < 1) return;
+    splitOcModalState.parts.splice(idx, 1);
+    renderSplitOcModalRows();
+};
+
+window.cerrarSplitOcModal = function () {
+    closeSplitOcModal();
+};
+
+window.guardarSplitOcModal = async function () {
+    try {
+        ensureSplitOcModalInitialized();
+        if (!splitOcModalState || !Array.isArray(splitOcModalState.parts) || splitOcModalState.parts.length === 0) {
+            alert('No hay particiones para guardar.');
+            return;
+        }
+
+        const payloadParts = [];
+        let total = 0;
+        for (let i = 0; i < splitOcModalState.parts.length; i++) {
+            const raw = String(splitOcModalState.parts[i].pds || '').trim();
+            if (!/^\d+$/.test(raw)) {
+                alert(`Ingrese un PDS entero en la fila ${i + 1}.`);
+                return;
+            }
+            const pds = parseInt(raw, 10);
+            if (!Number.isFinite(pds) || pds < 0) {
+                alert(`Ingrese un PDS valido en la fila ${i + 1}.`);
+                return;
+            }
+            payloadParts.push({ pds: pds });
+            total += pds;
+        }
+
+        if (splitOcModalState.originalPds !== null && total !== splitOcModalState.originalPds) {
+            alert(`La suma de PDS (${formatNumber(total)}) debe coincidir con el total original (${formatNumber(splitOcModalState.originalPds)}).`);
+            return;
+        }
+
+        if (splitOcModalRefs.btnSave) splitOcModalRefs.btnSave.disabled = true;
+
+        const response = await fetch(WEB_APP_URL, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'splitOC',
+                row: splitOcModalState.rowIndex - 1,
+                baseCorte: splitOcModalState.corteBase,
+                parts: payloadParts,
+                sourceOp: splitOcModalState.sourceOp,
+                sourceCorte: splitOcModalState.sourceCorte,
+                sourceOpTela: splitOcModalState.sourceOpTela,
+                sourcePartida: splitOcModalState.sourcePartida,
+                sourceColor: splitOcModalState.sourceColor,
+                sourcePds: splitOcModalState.sourcePds
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+        if (!result || result.result !== 'success') {
+            throw new Error((result && result.message) || 'No se pudo partir la OC');
+        }
+
+        closeSplitOcModal();
+        showCosturaToast('OC partida correctamente', 'success');
+        await reloadData({ preferWebApp: true });
+    } catch (err) {
+        console.error('Error guardando split OC:', err);
+        alert((err && err.message) ? err.message : 'No se pudo partir la OC.');
+    } finally {
+        if (splitOcModalRefs.btnSave) splitOcModalRefs.btnSave.disabled = false;
+    }
+};
+
+function onSplitOcGlobalPointerDown(event) {
+    ensureSplitOcContextMenuInitialized();
+    const menu = splitOcContextMenuState.menu;
+    if (!menu || !menu.classList.contains('active')) return;
+    if (menu.contains(event.target)) return;
+    closeSplitOcContextMenu();
+}
+
+function onSplitOcGlobalKeyDown(event) {
+    if (event.key !== 'Escape') return;
+    closeSplitOcContextMenu();
+    closeSplitOcModal();
+    closeDevolucionOcModal();
+}
+
+function ensureDevolucionOcModalInitialized() {
+    if (devolucionOcModalRefs.overlay) return;
+
+    devolucionOcModalRefs.overlay = document.getElementById('devolucion-oc-modal-overlay');
+    devolucionOcModalRefs.title = document.getElementById('devolucion-oc-modal-title');
+    devolucionOcModalRefs.subtitle = document.getElementById('devolucion-oc-modal-subtitle');
+    devolucionOcModalRefs.tbody = document.getElementById('devolucion-oc-modal-tbody');
+    devolucionOcModalRefs.plantaSelect = document.getElementById('devolucion-oc-planta');
+    devolucionOcModalRefs.btnCancel = document.getElementById('devolucion-oc-modal-cancel');
+    devolucionOcModalRefs.btnSave = document.getElementById('devolucion-oc-modal-save');
+
+    if (!devolucionOcModalRefs.overlay || !devolucionOcModalRefs.tbody || !devolucionOcModalRefs.plantaSelect) return;
+}
+
+function getDevolucionViewLabel() {
+    const view = String(selectedPlantaFilter || '').trim();
+    if (!view) return 'COFACO';
+    if (typeof getPlantFilterLabel === 'function') {
+        return getPlantFilterLabel(view);
+    }
+    return view;
+}
+
+function buildDevolucionObservationLabel() {
+    return `DEVOLUCION DE CORTE DESDE ${getDevolucionViewLabel()}`;
+}
+
+function closeDevolucionOcModal() {
+    ensureDevolucionOcModalInitialized();
+    const overlay = devolucionOcModalRefs.overlay;
+    if (overlay) {
+        overlay.classList.remove('active');
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    devolucionOcModalState = null;
+}
+
+function renderDevolucionOcModal() {
+    if (!devolucionOcModalState || !devolucionOcModalRefs.tbody) return;
+
+    const row = devolucionOcModalState.row;
+    const cliente = String(row.cliente || '').trim();
+    const oc = String(row.op || '').trim() && String(row.corte || '').trim()
+        ? `${String(row.op || '').trim()}-${String(row.corte || '').trim()}`
+        : String(row.corte || '').trim();
+    const pds = Number.isFinite(Number(devolucionOcModalState.pds)) ? Number(devolucionOcModalState.pds) : 0;
+    const viewLabel = String(devolucionOcModalState.viewLabel || getDevolucionViewLabel()).trim() || 'COFACO';
+    const obsText = `DEVOLUCION DE CORTE DESDE ${viewLabel}`;
+
+    devolucionOcModalRefs.tbody.innerHTML = `
+        <tr>
+            <td class="devolucion-label">CLIENTE</td>
+            <td class="devolucion-value">${escapeHtml(cliente || '-')}</td>
+        </tr>
+        <tr>
+            <td class="devolucion-label">OC</td>
+            <td class="devolucion-value">${escapeHtml(oc || '-')}</td>
+        </tr>
+        <tr>
+            <td class="devolucion-label">PDS</td>
+            <td class="devolucion-value">${escapeHtml(formatNumber(pds))}</td>
+        </tr>
+        <tr>
+            <td class="devolucion-label">PLANTA</td>
+            <td class="devolucion-value">
+                <select id="devolucion-oc-planta" class="devolucion-select">
+                    <option value="COFACO">COFACO</option>
+                </select>
+            </td>
+        </tr>
+        <tr>
+            <td class="devolucion-label">LINEA</td>
+            <td class="devolucion-value devolucion-preview">X</td>
+        </tr>
+        <tr>
+            <td class="devolucion-label">HAB</td>
+            <td class="devolucion-value devolucion-preview">X PROG</td>
+        </tr>
+        <tr>
+            <td class="devolucion-label">OBSERVACIONES</td>
+            <td class="devolucion-value devolucion-preview">${escapeHtml(obsText)}</td>
+        </tr>
+    `;
+
+    devolucionOcModalRefs.plantaSelect = document.getElementById('devolucion-oc-planta');
+    if (devolucionOcModalRefs.plantaSelect) {
+        devolucionOcModalRefs.plantaSelect.value = String(devolucionOcModalState.planta || 'COFACO');
+    }
+
+    if (devolucionOcModalRefs.title) {
+        devolucionOcModalRefs.title.textContent = `OC: ${oc || '-'}`;
+    }
+    if (devolucionOcModalRefs.subtitle) {
+        devolucionOcModalRefs.subtitle.textContent = `CLIENTE: ${cliente || '-'} | PDS: ${formatNumber(pds)}`;
+    }
+}
+
+function openDevolucionOcModalFromRow(rowIndex) {
+    const row = getRowByRowIndex(rowIndex);
+    if (!row) return;
+    if (!canEditRowMeta({ rowIndex })) return;
+
+    const oc = String(row.op || '').trim() && String(row.corte || '').trim()
+        ? `${String(row.op || '').trim()}-${String(row.corte || '').trim()}`
+        : String(row.corte || '').trim();
+
+    devolucionOcModalState = {
+        rowIndex: Number(row.rowIndex),
+        row: row,
+        planta: 'COFACO',
+        oc: oc,
+        pds: Number(row.pds) || 0,
+        viewLabel: getDevolucionViewLabel()
+    };
+
+    ensureDevolucionOcModalInitialized();
+    if (!devolucionOcModalRefs.overlay) return;
+
+    renderDevolucionOcModal();
+    devolucionOcModalRefs.overlay.classList.add('active');
+    devolucionOcModalRefs.overlay.setAttribute('aria-hidden', 'false');
+}
+
+window.abrirDevolucionOcModalDesdeMenu = function () {
+    const rowIndex = splitOcContextMenuState.rowIndex;
+    closeSplitOcContextMenu();
+    if (!Number.isInteger(rowIndex) || rowIndex < 1) return;
+    openDevolucionOcModalFromRow(rowIndex);
+};
+
+window.cerrarDevolucionOcModal = function () {
+    closeDevolucionOcModal();
+};
+
+window.generarDevolucionOcModal = async function () {
+    try {
+        ensureDevolucionOcModalInitialized();
+        if (!devolucionOcModalState) return;
+
+        const plantaSel = devolucionOcModalRefs.plantaSelect;
+        const targetPlanta = String(plantaSel && plantaSel.value ? plantaSel.value : 'COFACO').trim() || 'COFACO';
+        const viewLabel = String(devolucionOcModalState.viewLabel || getDevolucionViewLabel()).trim() || 'COFACO';
+        const obsText = `DEVOLUCION DE CORTE DESDE ${viewLabel}`;
+
+        if (devolucionOcModalRefs.btnSave) devolucionOcModalRefs.btnSave.disabled = true;
+
+        const response = await fetch(WEB_APP_URL, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'devolucionCorte',
+                row: devolucionOcModalState.rowIndex - 1,
+                sourceOp: String(devolucionOcModalState.row.op || '').trim(),
+                sourceCorte: String(devolucionOcModalState.row.corte || '').trim(),
+                sourceOpTela: String(devolucionOcModalState.row.opTela || '').trim(),
+                sourcePartida: String(devolucionOcModalState.row.partida || '').trim(),
+                sourceColor: String(devolucionOcModalState.row.color || '').trim(),
+                sourcePds: String(devolucionOcModalState.row.pds === null || devolucionOcModalState.row.pds === undefined ? '' : devolucionOcModalState.row.pds).trim(),
+                targetPlanta: targetPlanta,
+                obsText: obsText,
+                viewLabel: viewLabel
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+        if (!result || result.result !== 'success') {
+            throw new Error((result && result.message) || 'No se pudo generar la devolucion');
+        }
+
+        closeDevolucionOcModal();
+        showCosturaToast('Devolucion generada correctamente', 'success');
+        await reloadData({ preferWebApp: true });
+    } catch (err) {
+        console.error('Error generando devolucion:', err);
+        alert((err && err.message) ? err.message : 'No se pudo generar la devolucion.');
+    } finally {
+        if (devolucionOcModalRefs.btnSave) devolucionOcModalRefs.btnSave.disabled = false;
+    }
+};
+
+function onDevolucionOcGlobalPointerDown(event) {
+    ensureDevolucionOcModalInitialized();
+    const overlay = devolucionOcModalRefs.overlay;
+    if (!overlay || !overlay.classList.contains('active')) return;
+    if (overlay.contains(event.target)) return;
+    closeDevolucionOcModal();
 }
 
 function findNextEditableCellInColumn(currentCell, colName) {
@@ -2058,6 +2662,18 @@ function initTableInteractions() {
         const currentLinea = String(lineaCell.dataset.currentLinea || '').trim();
         const currentPlanta = String(lineaCell.dataset.currentPlanta || '').trim();
         openLineaModal(meta, currentPlanta, currentLinea);
+    });
+
+    tbody.addEventListener('contextmenu', event => {
+        const colorCell = event.target.closest('td.color-split-cell');
+        if (!colorCell) return;
+
+        const meta = readRowMeta(colorCell.dataset);
+        if (!meta || !canEditRowMeta(meta)) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        openSplitOcContextMenu(event, meta.rowIndex);
     });
 
     tbody.addEventListener('change', async event => {
@@ -2712,10 +3328,20 @@ window.addEventListener('DOMContentLoaded', async () => {
     ensureLineaModalInitialized();
     ensureLiquidacionModalInitialized();
     ensureColorFilterModalInitialized();
+    ensureSplitOcModalInitialized();
+    ensureDevolucionOcModalInitialized();
+    ensureSplitOcContextMenuInitialized();
     const colorHeader = document.getElementById('th-color-filter');
     if (colorHeader) {
         colorHeader.addEventListener('contextmenu', openColorFilterFromHeader);
     }
+    document.addEventListener('mousedown', onSplitOcGlobalPointerDown, true);
+    document.addEventListener('touchstart', onSplitOcGlobalPointerDown, true);
+    document.addEventListener('mousedown', onDevolucionOcGlobalPointerDown, true);
+    document.addEventListener('touchstart', onDevolucionOcGlobalPointerDown, true);
+    document.addEventListener('keydown', onSplitOcGlobalKeyDown, true);
+    window.addEventListener('resize', closeSplitOcContextMenu, true);
+    window.addEventListener('scroll', closeSplitOcContextMenu, { capture: true, passive: true });
     const searchInput = document.getElementById('search-oc-input');
     if (searchInput) {
         searchInput.addEventListener('input', () => {
