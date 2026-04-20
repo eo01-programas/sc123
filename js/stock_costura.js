@@ -1,4 +1,4 @@
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzJZKTMPM5MwEcHwKb_zRKS-r3N8y96985M_RnVshEnImsdsX1Y9IQoGHIC6TqNZxC_gQ/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyvLG9IxHRddHMWN12opa0mRq6Zbv7pTyJiWTPEHvtG4j-dCG2hbKbA4TXIDAGPXTqEOQ/exec';
 const SHEET_ID = '18cQuwqerdMggAeJ8TCUKA7-gujXsA91-CRMUTNpr8aQ';
 const MONTH_ABBR_ES = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 const ESTADO_COSTURA_OPTIONS = ['', 'Proceso', 'Liquidado', 'Anaquel', 'En Habilitado'];
@@ -2070,7 +2070,7 @@ function openSplitOcModalFromRow(rowIndex) {
         splitOcModalRefs.subtitle.textContent = `COLOR: ${splitOcModalState.color || '-'} | PDS: ${splitOcModalState.originalPds === null ? '-' : formatNumber(splitOcModalState.originalPds)}`;
     }
     if (splitOcModalRefs.note) {
-        splitOcModalRefs.note.textContent = 'La primera fila se guardara como sufijo .1. Puede editar LINEA por fila.';
+        splitOcModalRefs.note.textContent = 'La primera fila se guardara en la fila original como sufijo .1. Puede editar LINEA por fila.';
     }
 
     renderSplitOcModalRows();
