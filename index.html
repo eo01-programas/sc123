@@ -128,6 +128,72 @@
         </div>
     </div>
 
+    <div id="split-oc-context-menu" class="split-oc-context-menu" aria-hidden="true">
+        <div class="split-oc-context-menu-item" onclick="abrirSplitOcModalDesdeMenu()">Partir la OC</div>
+        <div class="split-oc-context-menu-item" onclick="abrirDevolucionOcModalDesdeMenu()">Devolucion de Corte</div>
+    </div>
+
+    <div id="split-oc-modal-overlay" class="linea-modal-overlay" aria-hidden="true"
+        onclick="if(event.target === this) cerrarSplitOcModal()">
+        <div class="linea-modal split-oc-modal" role="dialog" aria-modal="true" aria-labelledby="split-oc-modal-title">
+            <div class="linea-modal-header">Partir OC</div>
+            <div class="split-oc-modal-body">
+                <div class="split-oc-modal-summary">
+                    <div id="split-oc-modal-title" class="split-oc-modal-main">OC: ---</div>
+                    <div id="split-oc-modal-subtitle" class="split-oc-modal-subtitle">COLOR: --- | PDS: ---</div>
+                    <div id="split-oc-modal-note" class="split-oc-modal-note">La primera fila se guardara como sufijo -1.</div>
+                </div>
+                <div class="split-oc-modal-table-wrap">
+                    <table class="split-oc-modal-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 58%;">OC</th>
+                                <th style="width: 24%; text-align:right;">PDS</th>
+                                <th style="width: 18%; text-align:center;">Accion</th>
+                            </tr>
+                        </thead>
+                        <tbody id="split-oc-modal-tbody">
+                        </tbody>
+                    </table>
+                </div>
+                <div class="split-oc-modal-footer">
+                    <div id="split-oc-modal-total" class="split-oc-modal-total">Total PDS: 0 / 0</div>
+                </div>
+            </div>
+            <div class="linea-modal-actions">
+                <button type="button" id="split-oc-modal-cancel" class="linea-modal-btn" onclick="cerrarSplitOcModal()">Cancelar</button>
+                <button type="button" id="split-oc-modal-save" class="linea-modal-btn primary" onclick="guardarSplitOcModal()">Partir OC</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="devolucion-oc-modal-overlay" class="linea-modal-overlay" aria-hidden="true"
+        onclick="if(event.target === this) cerrarDevolucionOcModal()">
+        <div class="linea-modal devolucion-oc-modal" role="dialog" aria-modal="true"
+            aria-labelledby="devolucion-oc-modal-title">
+            <div class="linea-modal-header">Devolucion de Corte</div>
+            <div class="devolucion-oc-modal-body">
+                <div class="devolucion-oc-modal-summary">
+                    <div id="devolucion-oc-modal-title" class="devolucion-oc-modal-main">OC: ---</div>
+                    <div id="devolucion-oc-modal-subtitle" class="devolucion-oc-modal-subtitle">CLIENTE: --- | PDS: ---</div>
+                    <div class="devolucion-oc-modal-note">Actualiza la fila seleccionada con los datos de devolucion.</div>
+                </div>
+                <div class="devolucion-oc-modal-table-wrap">
+                    <table class="devolucion-oc-modal-table">
+                        <tbody id="devolucion-oc-modal-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="linea-modal-actions">
+                <button type="button" id="devolucion-oc-modal-cancel" class="linea-modal-btn"
+                    onclick="cerrarDevolucionOcModal()">Cancelar</button>
+                <button type="button" id="devolucion-oc-modal-save" class="linea-modal-btn primary"
+                    onclick="generarDevolucionOcModal()">ACTUALIZAR DEVOLUCION</button>
+            </div>
+        </div>
+    </div>
+
     <script src="js/cofaco.js"></script>
     <script src="js/cofaco_2.js"></script>
     <script src="js/citi1.js"></script>
