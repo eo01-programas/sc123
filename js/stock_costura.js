@@ -1,4 +1,4 @@
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyOIzkHZG_Pf1pTixqFXsqywE7AbR1JDXXwNVdrUc9twGCSWUG6JHJ3wtwRBT32qesnWQ/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzJZKTMPM5MwEcHwKb_zRKS-r3N8y96985M_RnVshEnImsdsX1Y9IQoGHIC6TqNZxC_gQ/exec';
 const SHEET_ID = '18cQuwqerdMggAeJ8TCUKA7-gujXsA91-CRMUTNpr8aQ';
 const MONTH_ABBR_ES = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 const ESTADO_COSTURA_OPTIONS = ['', 'Proceso', 'Liquidado', 'Anaquel', 'En Habilitado'];
@@ -1832,11 +1832,22 @@ async function saveCellToSheet(meta, colName, value) {
 function normalizeSplitCorteBase(corteValue) {
     const raw = String(corteValue || '').trim();
     if (!raw) return '';
+    const dotMatch = raw.match(/^(.*)\.(\d+)$/);
+    if (dotMatch) {
+        return dotMatch[1];
+    }
     const parts = raw.split('-');
     if (parts.length >= 2 && /^\d+$/.test(parts[parts.length - 1])) {
         return parts.slice(0, -1).join('-');
     }
     return raw;
+}
+
+function normalizeSplitLineaValue(lineaValue) {
+    return String(lineaValue || '')
+        .trim()
+        .toUpperCase()
+        .replace(/[^0-9A-Z]/g, '');
 }
 
 function getRowByRowIndex(rowIndex) {
@@ -1859,7 +1870,7 @@ function formatSplitOcLabel(op, corteBase, suffixIndex) {
     const safeSuffix = Number.isFinite(suffix) && suffix > 0 ? suffix : 1;
     const safeOp = String(op || '').trim();
     const safeBase = String(corteBase || '').trim();
-    return safeOp && safeBase ? `${safeOp}-${safeBase}-${safeSuffix}` : '';
+    return safeOp && safeBase ? `${safeOp}-${safeBase}.${safeSuffix}` : '';
 }
 
 function ensureSplitOcModalInitialized() {
@@ -1929,7 +1940,10 @@ function renderSplitOcModalRows() {
     if (!splitOcModalRefs.tbody || !splitOcModalState) return;
     const parts = Array.isArray(splitOcModalState.parts) && splitOcModalState.parts.length
         ? splitOcModalState.parts
-        : [{ pds: '' }];
+        : [{
+            pds: '',
+            linea: String(splitOcModalState.sourceLinea || '').trim()
+        }];
     splitOcModalState.parts = parts;
 
     const op = String(splitOcModalState.op || '').trim();
@@ -1937,6 +1951,7 @@ function renderSplitOcModalRows() {
 
     splitOcModalRefs.tbody.innerHTML = parts.map((part, idx) => {
         const ocLabel = formatSplitOcLabel(op, corteBase, idx + 1);
+        const rawLinea = String(part && part.linea !== undefined && part.linea !== null ? part.linea : '').trim();
         const rawPds = String(part && part.pds !== undefined && part.pds !== null ? part.pds : '').trim();
         const actionButton = idx === 0
             ? '<button type="button" class="split-oc-row-btn add" data-split-action="add" title="Agregar otra particion">+</button>'
@@ -1945,6 +1960,10 @@ function renderSplitOcModalRows() {
         return `
             <tr data-split-index="${idx}">
                 <td class="split-oc-label" title="${escapeHtmlAttr(ocLabel)}">${escapeHtml(ocLabel)}</td>
+                <td>
+                    <input type="text" class="split-oc-linea-input" inputmode="text" maxlength="12" autocomplete="off"
+                        data-split-index="${idx}" value="${escapeHtmlAttr(rawLinea)}" placeholder="Ingrese LINEA">
+                </td>
                 <td>
                     <input type="text" class="split-oc-pds-input" inputmode="numeric" pattern="\\d*"
                         data-split-index="${idx}" value="${escapeHtmlAttr(rawPds)}" placeholder="Ingrese PDS">
@@ -2028,6 +2047,7 @@ function openSplitOcModalFromRow(rowIndex) {
         sourceOpTela: String(row.opTela || '').trim(),
         sourcePartida: String(row.partida || '').trim(),
         sourceColor: String(row.color || '').trim(),
+        sourceLinea: String(row.linea || '').trim(),
         sourcePds: String(row.pds === null || row.pds === undefined ? '' : row.pds).trim(),
         op: baseInfo.op,
         corteBase: baseInfo.corteBase,
@@ -2035,7 +2055,8 @@ function openSplitOcModalFromRow(rowIndex) {
         color: String(row.color || '').trim(),
         originalPds: Number.isFinite(originalPds) ? originalPds : null,
         parts: [{
-            pds: Number.isFinite(originalPds) ? String(originalPds) : ''
+            pds: Number.isFinite(originalPds) ? String(originalPds) : '',
+            linea: String(row.linea || '').trim()
         }]
     };
 
@@ -2049,7 +2070,7 @@ function openSplitOcModalFromRow(rowIndex) {
         splitOcModalRefs.subtitle.textContent = `COLOR: ${splitOcModalState.color || '-'} | PDS: ${splitOcModalState.originalPds === null ? '-' : formatNumber(splitOcModalState.originalPds)}`;
     }
     if (splitOcModalRefs.note) {
-        splitOcModalRefs.note.textContent = 'La primera fila se guardara como sufijo -1.';
+        splitOcModalRefs.note.textContent = 'La primera fila se guardara como sufijo .1. Puede editar LINEA por fila.';
     }
 
     renderSplitOcModalRows();
@@ -2063,9 +2084,12 @@ function onSplitOcModalClick(event) {
 
     const action = String(button.dataset.splitAction || '').trim().toLowerCase();
     if (action === 'add') {
-        splitOcModalState.parts.push({ pds: '' });
+        splitOcModalState.parts.push({
+            pds: '',
+            linea: String(splitOcModalState.sourceLinea || '').trim()
+        });
         renderSplitOcModalRows();
-        const lastInput = splitOcModalRefs.tbody ? splitOcModalRefs.tbody.querySelector('tr:last-child input.split-oc-pds-input') : null;
+        const lastInput = splitOcModalRefs.tbody ? splitOcModalRefs.tbody.querySelector('tr:last-child input.split-oc-linea-input') : null;
         if (lastInput) {
             setTimeout(() => {
                 try {
@@ -2086,6 +2110,19 @@ function onSplitOcModalClick(event) {
 }
 
 function onSplitOcModalInput(event) {
+    const lineaInput = event.target.closest('input.split-oc-linea-input');
+    if (lineaInput && splitOcModalState) {
+        const idx = parseInt(lineaInput.dataset.splitIndex, 10);
+        if (!Number.isInteger(idx) || idx < 0 || !splitOcModalState.parts[idx]) return;
+
+        const sanitized = normalizeSplitLineaValue(lineaInput.value);
+        if (lineaInput.value !== sanitized) {
+            lineaInput.value = sanitized;
+        }
+        splitOcModalState.parts[idx].linea = sanitized;
+        return;
+    }
+
     const input = event.target.closest('input.split-oc-pds-input');
     if (!input || !splitOcModalState) return;
 
@@ -2109,7 +2146,10 @@ window.abrirSplitOcModalDesdeMenu = function () {
 
 window.addSplitOcRow = function () {
     if (!splitOcModalState) return;
-    splitOcModalState.parts.push({ pds: '' });
+    splitOcModalState.parts.push({
+        pds: '',
+        linea: String(splitOcModalState.sourceLinea || '').trim()
+    });
     renderSplitOcModalRows();
 };
 
@@ -2135,7 +2175,9 @@ window.guardarSplitOcModal = async function () {
         const payloadParts = [];
         let total = 0;
         for (let i = 0; i < splitOcModalState.parts.length; i++) {
+            const rawLinea = String(splitOcModalState.parts[i].linea || '').trim();
             const raw = String(splitOcModalState.parts[i].pds || '').trim();
+            const linea = normalizeSplitLineaValue(rawLinea || splitOcModalState.sourceLinea || '');
             if (!/^\d+$/.test(raw)) {
                 alert(`Ingrese un PDS entero en la fila ${i + 1}.`);
                 return;
@@ -2145,7 +2187,10 @@ window.guardarSplitOcModal = async function () {
                 alert(`Ingrese un PDS valido en la fila ${i + 1}.`);
                 return;
             }
-            payloadParts.push({ pds: pds });
+            payloadParts.push({
+                pds: pds,
+                linea: linea
+            });
             total += pds;
         }
 
