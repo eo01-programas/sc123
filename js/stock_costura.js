@@ -58,6 +58,7 @@ const devolucionOcModalRefs = {
 let lineaModalState = null;
 const lineaModalRefs = {
     overlay: null,
+    subtitle: null,
     planta: null,
     linea: null,
     btnCancel: null,
@@ -708,6 +709,7 @@ function ensureLineaModalInitialized() {
     if (lineaModalRefs.overlay) return;
 
     lineaModalRefs.overlay = document.getElementById('linea-modal-overlay');
+    lineaModalRefs.subtitle = document.getElementById('linea-modal-subtitle');
     lineaModalRefs.planta = document.getElementById('linea-modal-planta');
     lineaModalRefs.linea = document.getElementById('linea-modal-linea');
     lineaModalRefs.btnCancel = document.getElementById('linea-modal-cancel');
@@ -756,15 +758,25 @@ function openLineaModal(meta, currentPlanta, currentLinea) {
 
     const plantaNorm = normalizePlantaModalValue(currentPlanta);
     const lineaNorm = String(currentLinea || '').trim();
+    const row = getRowByRowIndex(meta.rowIndex) || {};
+    const cliente = String(row.cliente || '').trim() || '-';
+    const oc = String(row.op || '').trim() && String(row.corte || '').trim()
+        ? `${String(row.op || '').trim()}-${String(row.corte || '').trim()}`
+        : (String(row.op || '').trim() || '-');
+    const color = String(row.color || '').trim() || '-';
     lineaModalState = {
         meta,
         previousPlanta: plantaNorm,
-        previousLinea: lineaNorm
+        previousLinea: lineaNorm,
+        subtitle: `${cliente} - ${oc} - ${color}`
     };
 
     renderLineaModalPlantaOptions(plantaNorm);
     lineaModalRefs.planta.value = plantaNorm;
     lineaModalRefs.linea.value = lineaNorm;
+    if (lineaModalRefs.subtitle) {
+        lineaModalRefs.subtitle.textContent = lineaModalState.subtitle;
+    }
     lineaModalRefs.overlay.classList.add('active');
     lineaModalRefs.overlay.setAttribute('aria-hidden', 'false');
     setTimeout(() => {
@@ -779,6 +791,7 @@ function closeLineaModal() {
     if (lineaModalRefs.btnCancel) lineaModalRefs.btnCancel.disabled = false;
     if (lineaModalRefs.planta) lineaModalRefs.planta.disabled = false;
     if (lineaModalRefs.linea) lineaModalRefs.linea.disabled = false;
+    if (lineaModalRefs.subtitle) lineaModalRefs.subtitle.textContent = 'CLIENTE - OC - COLOR';
     lineaModalRefs.overlay.classList.remove('active');
     lineaModalRefs.overlay.setAttribute('aria-hidden', 'true');
     lineaModalState = null;
@@ -884,21 +897,32 @@ async function confirmLiquidacionModal() {
     liquidacionModalRefs.btnNo.disabled = true;
     liquidacionModalRefs.btnYes.disabled = true;
 
+    const previousAllDataSnapshot = allData.map(row => ({ ...row }));
+
     try {
         const nextValue = buildLiquidacionCostStamp();
-        await runWithOptionalReorderModal(async () => {
-            await saveCellToSheet(meta, 'liquidacion_cost', nextValue);
-            const deletedRow = removeLocalRow(meta.rowIndex);
-            if (deletedRow) {
-                resequenceLocalPcostByLinea(deletedRow.planta, deletedRow.linea);
-            }
+        const savePromise = saveCellToSheet(meta, 'liquidacion_cost', nextValue);
+        const deletedRow = removeLocalRow(meta.rowIndex);
+        if (deletedRow) {
             updateStats();
             renderTable();
-        });
-        closeLiquidacionModal({ keepCheckboxChecked: true });
+        }
+        closeLiquidacionModal();
+        showCosturaToast('Guardando liquidacion...', 'info');
+
+        await savePromise;
+        if (deletedRow) {
+            resequenceLocalPcostByLinea(deletedRow.planta, deletedRow.linea);
+            updateStats();
+            renderTable();
+        }
+        showCosturaToast('Liquidacion guardada', 'success');
     } catch (err) {
         console.error('Error guardando liquidacion_cost:', err);
-        alert('No se pudo guardar liquidacion_cost.');
+        restoreLocalRowsSnapshot(previousAllDataSnapshot);
+        updateStats();
+        renderTable();
+        showCosturaToast('No se pudo guardar liquidacion. Se restauro la fila.', 'error');
         closeLiquidacionModal();
     }
 }
@@ -1765,6 +1789,13 @@ function removeLocalRow(rowIndex) {
     return removed;
 }
 
+function restoreLocalRowsSnapshot(snapshot) {
+    if (!Array.isArray(snapshot)) return;
+    allData = snapshot.map(row => ({ ...row }));
+    ocSearchDataStamp += 1;
+    ocSearchState = null;
+}
+
 function resequenceLocalPcostByLinea(plantaValue, lineaValue) {
     const plantNorm = normalizePlantFilterValue(plantaValue);
     const lineaNorm = String(lineaValue || '').trim();
@@ -2493,7 +2524,7 @@ function openEditableIntCellEditor(intCell, options = {}) {
         intCell.textContent = formatEditableIntegerDisplay(nextRaw);
     };
 
-    const commit = async (commitOptions = {}) => {
+    const commit = (commitOptions = {}) => {
         if (finished) return;
         const moveNext = commitOptions.moveNext === true && shouldMoveNextOnEnter;
         const entered = String(input.value || '').trim();
@@ -2508,14 +2539,42 @@ function openEditableIntCellEditor(intCell, options = {}) {
             input.disabled = true;
 
             try {
-                let updatedRow = null;
                 if (previousRaw !== '') {
-                    await saveCellToSheet(meta, colName, '');
-                    updatedRow = updateLocalRowValue(meta.rowIndex, colName, '');
-                }
-                restoreCell('');
-                if (updatedRow && isPcostColumn) {
-                    renderTable();
+                    const updatedRow = updateLocalRowValue(meta.rowIndex, colName, '');
+                    restoreCell('');
+                    if (updatedRow && isPcostColumn) {
+                        renderTable();
+                        return;
+                    }
+                    if (updatedRow) {
+                        const tr = intCell.closest('tr');
+                        const finalCell = tr ? tr.querySelector('.s-final-cell') : null;
+                        if (finalCell) {
+                            finalCell.innerHTML = `<strong>${updatedRow.stockFinalDisplay}</strong>`;
+                        }
+                        updateRenderedLineaBandTotal(updatedRow.linea);
+                        updateRenderedSectorBandTotal(getSectorNameForPlant(updatedRow.linea, selectedPlantaFilter));
+                        updateStats();
+                    }
+                    void saveCellToSheet(meta, colName, '').catch(err => {
+                        console.error('Error guardando valor vacio:', err);
+                        alert('No se pudo guardar el valor.');
+                        updateLocalRowValue(meta.rowIndex, colName, previousRaw);
+                        restoreCell(previousRaw);
+                        const tr = intCell.closest('tr');
+                        const finalCell = tr ? tr.querySelector('.s-final-cell') : null;
+                        if (finalCell) {
+                            const revertedRow = getRowByRowIndex(meta.rowIndex);
+                            if (revertedRow) {
+                                finalCell.innerHTML = `<strong>${revertedRow.stockFinalDisplay}</strong>`;
+                                updateRenderedLineaBandTotal(revertedRow.linea);
+                                updateRenderedSectorBandTotal(getSectorNameForPlant(revertedRow.linea, selectedPlantaFilter));
+                                updateStats();
+                            }
+                        }
+                    });
+                } else {
+                    restoreCell('');
                 }
             } catch (err) {
                 console.error('Error guardando valor vacio:', err);
@@ -2536,25 +2595,49 @@ function openEditableIntCellEditor(intCell, options = {}) {
         input.disabled = true;
 
         try {
-            let updatedRow = null;
             if (normalized !== previousRaw) {
-                await saveCellToSheet(meta, colName, normalized);
-                updatedRow = updateLocalRowValue(meta.rowIndex, colName, normalized);
-            }
-            restoreCell(normalized);
-            if (updatedRow && isPcostColumn) {
-                renderTable();
-                return;
-            }
-            if (updatedRow) {
-                const tr = intCell.closest('tr');
-                const finalCell = tr ? tr.querySelector('.s-final-cell') : null;
-                if (finalCell) {
-                    finalCell.innerHTML = `<strong>${updatedRow.stockFinalDisplay}</strong>`;
+                const updatedRow = updateLocalRowValue(meta.rowIndex, colName, normalized);
+                restoreCell(normalized);
+                if (updatedRow && isPcostColumn) {
+                    renderTable();
+                    return;
                 }
-                updateRenderedLineaBandTotal(updatedRow.linea);
-                updateRenderedSectorBandTotal(getSectorNameForPlant(updatedRow.linea, selectedPlantaFilter));
-                updateStats();
+                if (updatedRow) {
+                    const tr = intCell.closest('tr');
+                    const finalCell = tr ? tr.querySelector('.s-final-cell') : null;
+                    if (finalCell) {
+                        finalCell.innerHTML = `<strong>${updatedRow.stockFinalDisplay}</strong>`;
+                    }
+                    updateRenderedLineaBandTotal(updatedRow.linea);
+                    updateRenderedSectorBandTotal(getSectorNameForPlant(updatedRow.linea, selectedPlantaFilter));
+                    updateStats();
+                }
+
+                void saveCellToSheet(meta, colName, normalized).catch(err => {
+                    console.error('Error guardando valor entero:', err);
+                    alert('No se pudo guardar el valor.');
+                    updateLocalRowValue(meta.rowIndex, colName, previousRaw);
+                    restoreCell(previousRaw);
+                    if (isPcostColumn) {
+                        renderTable();
+                        return;
+                    }
+                    const revertedRow = getRowByRowIndex(meta.rowIndex);
+                    if (revertedRow) {
+                        const tr = intCell.closest('tr');
+                        const finalCell = tr ? tr.querySelector('.s-final-cell') : null;
+                        if (finalCell) {
+                            finalCell.innerHTML = `<strong>${revertedRow.stockFinalDisplay}</strong>`;
+                        }
+                        updateRenderedLineaBandTotal(revertedRow.linea);
+                        updateRenderedSectorBandTotal(getSectorNameForPlant(revertedRow.linea, selectedPlantaFilter));
+                        updateStats();
+                    } else {
+                        renderTable();
+                    }
+                });
+            } else {
+                restoreCell(normalized);
             }
             if (moveNext) {
                 const nextCell = findNextEditableCellInColumn(intCell, colName);
