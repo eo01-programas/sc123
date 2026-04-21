@@ -4,8 +4,8 @@ const MONTH_ABBR_ES = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', '
 const ESTADO_COSTURA_OPTIONS = ['', 'Proceso', 'Liquidado', 'Anaquel', 'En Habilitado'];
 let allData = [];
 const PLANTA_FILTER_OTHERS = '__OTHERS__';
-const PLANTA_ORDER = ['COFACO', 'COFACO 2', 'CITI1', 'CITI2', 'CITI3', 'CITI4'];
-const PLANTA_TOTAL_FILTERS = ['COFACO', 'COFACO 2', 'CITI1', 'CITI2', 'CITI3', 'CITI4', PLANTA_FILTER_OTHERS];
+const PLANTA_ORDER = ['COFACO', 'CITI1', 'CITI2', 'CITI3', 'CITI4', 'CITI5'];
+const PLANTA_TOTAL_FILTERS = ['COFACO', 'CITI1', 'CITI2', 'CITI3', 'CITI4', 'CITI5', PLANTA_FILTER_OTHERS];
 const LINEA_BAND_CLICK_DELAY_MS = 220;
 const SHIFT_PILL_OPTIONS_BY_PLANT = {
     COFACO: ['S1', 'S2', 'TN'],
@@ -15,15 +15,15 @@ const SHIFT_PILL_OPTIONS_BY_PLANT = {
 const collapsedLineasByFilter = new Map();
 const LINEA_MODAL_PLANTA_OPTIONS = [
     { value: 'COFACO', label: 'COFACO' },
-    { value: 'COFACO 2', label: 'COFACO 2' },
     { value: 'CITI1', label: 'CITI1' },
     { value: 'CITI2', label: 'CITI2' },
     { value: 'CITI3', label: 'CITI3' },
     { value: 'CITI4', label: 'CITI4' },
+    { value: 'CITI5', label: 'CITI5' },
     { value: 'S/DESTINO', label: 'S/DESTINO' },
     { value: '', label: 'VACIO' }
 ];
-const OC_SEARCH_PLANT_ORDER = ['COFACO', 'COFACO 2', 'CITI1', 'CITI2', 'CITI3', 'CITI4', PLANTA_FILTER_OTHERS];
+const OC_SEARCH_PLANT_ORDER = ['COFACO', 'CITI1', 'CITI2', 'CITI3', 'CITI4', 'CITI5', PLANTA_FILTER_OTHERS];
 let selectedPlantaFilter = 'COFACO';
 let activeShifts = [];
 let activeOcSearchQuery = '';
@@ -166,7 +166,7 @@ function normalizeColorFilterValue(value) {
 function resolveInitialPlantaFilterForProfile(profile) {
     const rawKey = String(profile && profile.key ? profile.key : '').trim().toUpperCase();
     const editableFilters = profile && Array.isArray(profile.editableFilters) ? profile.editableFilters : [];
-    const supportedFilters = new Set(['COFACO', 'COFACO 2', 'CITI1', 'CITI2', 'CITI3', 'CITI4', PLANTA_FILTER_OTHERS]);
+    const supportedFilters = new Set(['COFACO', 'CITI1', 'CITI2', 'CITI3', 'CITI4', 'CITI5', PLANTA_FILTER_OTHERS]);
 
     if (supportedFilters.has(rawKey)) {
         return rawKey;
@@ -1149,11 +1149,11 @@ function renderPlantPills() {
 
     const allPills = [
         { value: 'COFACO', label: 'COFACO', enabled: plantSet.has('COFACO') },
-        { value: 'COFACO 2', label: 'COFACO 2', enabled: plantSet.has('COFACO 2') },
         { value: 'CITI1', label: 'CITI1', enabled: plantSet.has('CITI1') },
         { value: 'CITI2', label: 'CITI2', enabled: plantSet.has('CITI2') },
         { value: 'CITI3', label: 'CITI3', enabled: plantSet.has('CITI3') },
         { value: 'CITI4', label: 'CITI4', enabled: plantSet.has('CITI4') },
+        { value: 'CITI5', label: 'CITI5', enabled: plantSet.has('CITI5') },
         { value: PLANTA_FILTER_OTHERS, label: 'Otros', enabled: hasOthers, title: 'Incluye S/DESTINO y VACIO' }
     ];
 
@@ -1647,7 +1647,7 @@ function getStockFinalNumericValue(row) {
 function getLineaGroupStockFinalNumericValue(row) {
     const baseValue = getStockFinalNumericValue(row);
     const currentFilter = String(selectedPlantaFilter || '').toUpperCase();
-    if (currentFilter !== 'CITI1' && currentFilter !== 'CITI2' && currentFilter !== 'CITI3' && currentFilter !== 'CITI4') {
+    if (currentFilter !== 'CITI1' && currentFilter !== 'CITI2' && currentFilter !== 'CITI3' && currentFilter !== 'CITI4' && currentFilter !== 'CITI5') {
         return baseValue;
     }
 
@@ -1676,6 +1676,7 @@ function normalizeEstadoCostura(value) {
     if (normalized === 'EN HAB CITI2') return 'En hab CITI2';
     if (normalized === 'EN HAB CITI3') return 'En hab CITI3';
     if (normalized === 'EN HAB CITI4') return 'En hab CITI4';
+    if (normalized === 'EN HAB CITI5') return 'En hab CITI5';
     if (normalized === 'OK COSTURA') return 'OK COSTURA';
     return '';
 }
@@ -1691,6 +1692,8 @@ function getEstadoCosturaOptionsForCurrentFilter() {
         options.push('En hab CITI3', 'OK COSTURA');
     } else if (currentFilter === 'CITI4') {
         options.push('En hab CITI4', 'OK COSTURA');
+    } else if (currentFilter === 'CITI5') {
+        options.push('En hab CITI5', 'OK COSTURA');
     }
     return options;
 }
